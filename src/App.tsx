@@ -33,21 +33,21 @@ function AppLayout() {
   const getPageTitle = () => {
     switch (location.pathname) {
       case '/': return 'Dashboard';
-      case '/builder': return 'Sheet Builder';
-      case '/scan': return 'Scan Sheets';
-      case '/analytics': return 'Score Analytics';
-      case '/history': return 'Test History';
+      case '/builder': return 'Sheet builder';
+      case '/scan': return 'Scan sheets';
+      case '/analytics': return 'Score analytics';
+      case '/history': return 'Test history';
       case '/settings': return 'Settings';
       default: return 'GradeStack';
     }
   };
 
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden relative">
+    <div className="flex h-screen w-full bg-paper overflow-hidden relative">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col w-full h-full overflow-hidden">
         {location.pathname !== '/scan' && <MobileHeader title={getPageTitle()} onMenuClick={() => setSidebarOpen(true)} />}
-        <main className={`flex-1 overflow-y-auto w-full relative ${location.pathname === '/scan' ? 'bg-tertiary-container' : ''}`}>
+        <main className={`flex-1 overflow-y-auto w-full relative ${location.pathname === '/scan' ? 'bg-ink' : ''}`}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/builder" element={<SheetBuilder />} />

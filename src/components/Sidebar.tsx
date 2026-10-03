@@ -1,16 +1,17 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useStore } from '../store';
-import { signInWithGoogle, logOut } from '../lib/firebase';
+import { signInWithGoogle, logOut, firebaseEnabled } from '../lib/firebase';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Icon, BubbleMark } from './ui';
 
 const navItems = [
-  { path: '/', icon: 'dashboard', label: 'Dashboard' },
+  { path: '/', icon: 'home', label: 'Dashboard' },
   { path: '/builder', icon: 'edit_note', label: 'Sheet Builder' },
-  { path: '/scan', icon: 'photo_camera', label: 'Scan Sheets' },
-  { path: '/history', icon: 'history', label: 'Test History' },
-  { path: '/analytics', icon: 'analytics', label: 'Score Analytics' },
-  { path: '/settings', icon: 'settings', label: 'Settings' },
+  { path: '/scan', icon: 'document_scanner', label: 'Scan Sheets' },
+  { path: '/history', icon: 'library_books', label: 'Test History' },
+  { path: '/analytics', icon: 'monitoring', label: 'Score Analytics' },
+  { path: '/settings', icon: 'tune', label: 'Settings' },
 ];
 
 export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
@@ -20,70 +21,77 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
 
   return (
     <>
-      <div 
-        className={`fixed inset-0 bg-black/50 z-20 md:hidden transition-opacity ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      <div
+        className={`fixed inset-0 bg-ink/40 z-20 md:hidden transition-opacity ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         onClick={onClose}
       />
-      <motion.nav 
+      <motion.nav
         initial={false}
-        animate={{ width: isCollapsed ? 80 : 256 }}
-        className={`bg-surface border-r border-outline-variant flex flex-col h-screen shrink-0 fixed left-0 top-0 z-30 transition-transform md:transition-none duration-300 ease-in-out md:translate-x-0 md:relative ${isOpen ? 'translate-x-0 w-64' : '-translate-x-full w-64'} md:w-auto`}
+        animate={{ width: isCollapsed ? 76 : 248 }}
+        className={`bg-form border-r border-hairline flex flex-col h-screen shrink-0 fixed left-0 top-0 z-30 transition-transform md:transition-none duration-300 ease-in-out md:translate-x-0 md:relative ${isOpen ? 'translate-x-0 w-64' : '-translate-x-full w-64'} md:w-auto`}
       >
-        <div className={`mb-6 mt-4 flex flex-col pt-2 ${isCollapsed ? 'px-2' : 'px-4'} overflow-hidden whitespace-nowrap relative`}>
+        {/* Wordmark — a marked bubble row */}
+        <div className={`mt-5 mb-7 flex flex-col ${isCollapsed ? 'px-3' : 'px-5'} overflow-hidden whitespace-nowrap`}>
           <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
-            <div className={`flex items-center gap-3 ${isCollapsed ? 'justify-center w-full' : ''}`}>
-              <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shrink-0 shadow-sm cursor-pointer hover:bg-primary/90 transition-colors" onClick={() => setIsCollapsed(!isCollapsed)} title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}>
-                <span className="material-symbols-outlined text-white" style={{ fontVariationSettings: "'wght' 300" }}>
-                  stacked_inbox
-                </span>
-              </div>
+            <Link to="/" className={`flex items-center gap-3 ${isCollapsed ? 'justify-center w-full' : ''}`} onClick={onClose}>
+              <span className="w-9 h-9 rounded-md bg-mark text-on-mark flex items-center justify-center shrink-0">
+                <BubbleMark size={6} />
+              </span>
               <AnimatePresence>
                 {!isCollapsed && (
                   <motion.div
                     initial={{ opacity: 0, width: 0 }}
                     animate={{ opacity: 1, width: 'auto' }}
                     exit={{ opacity: 0, width: 0 }}
-                    transition={{ duration: 0.2 }}
+                    transition={{ duration: 0.15 }}
                     className="flex flex-col"
                   >
-                    <h1 className="text-2xl font-bold text-primary leading-tight">GradeStack</h1>
-                    <p className="text-sm text-on-surface-variant leading-tight">Academic Portal</p>
+                    <span className="font-display text-[22px] font-bold leading-none text-ink">GradeStack</span>
+                    <span className="text-[11px] text-pencil leading-tight mt-0.5">Bubble sheet grading</span>
                   </motion.div>
                 )}
               </AnimatePresence>
-            </div>
+            </Link>
 
             {!isCollapsed && (
-              <button 
-                className="hidden md:flex text-on-surface-variant p-1.5 rounded-full hover:bg-surface-container-low shrink-0 transition-colors" 
-                onClick={() => setIsCollapsed(!isCollapsed)}
+              <button
+                className="hidden md:flex text-faint p-1.5 rounded-md hover:bg-surface-container-low hover:text-ink shrink-0 transition-colors"
+                onClick={() => setIsCollapsed(true)}
                 title="Collapse sidebar"
               >
-                <span className="material-symbols-outlined text-[20px]">
-                  keyboard_double_arrow_left
-                </span>
+                <Icon name="keyboard_double_arrow_left" size={18} />
               </button>
             )}
-            
-            <button className={`md:hidden text-on-surface-variant p-sm rounded-full hover:bg-surface-variant shrink-0 ${isCollapsed ? 'hidden' : ''}`} onClick={onClose}>
-              <span className="material-symbols-outlined">close</span>
+
+            <button className={`md:hidden text-pencil p-1.5 rounded-md hover:bg-surface-container-low ${isCollapsed ? 'hidden' : ''}`} onClick={onClose} title="Close menu">
+              <Icon name="close" size={20} />
             </button>
           </div>
+          {isCollapsed && (
+            <button
+              className="hidden md:flex mt-2 mx-auto text-faint p-1.5 rounded-md hover:bg-surface-container-low hover:text-ink transition-colors"
+              onClick={() => setIsCollapsed(false)}
+              title="Expand sidebar"
+            >
+              <Icon name="keyboard_double_arrow_right" size={18} />
+            </button>
+          )}
         </div>
 
-        <div className={isCollapsed ? 'px-2' : 'px-4'}>
-          <Link 
+        <div className={isCollapsed ? 'px-3' : 'px-4'}>
+          <Link
             to="/builder"
             onClick={onClose}
-            className={`w-full bg-primary text-white py-2.5 rounded-lg mb-6 hover:bg-primary/90 hover:shadow-md transition-all shadow-sm flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-center gap-2 px-4'}`}
-            title="New Assessment"
+            className={`w-full bg-mark text-on-mark py-2.5 rounded-md mb-6 hover:bg-mark-deep transition-colors flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-center gap-2 px-4'}`}
+            title="New assessment"
           >
-            <span className="material-symbols-outlined shrink-0" style={{ fontSize: '20px' }}>add_circle</span>
-            {!isCollapsed && <span className="whitespace-nowrap font-bold text-sm tracking-tight">NEW ASSESSMENT</span>}
+            <Icon name="add" size={18} />
+            {!isCollapsed && <span className="whitespace-nowrap font-semibold text-sm">New assessment</span>}
           </Link>
         </div>
 
-        <ul className={`flex-1 space-y-1 overflow-y-auto overflow-x-hidden ${isCollapsed ? 'px-2' : 'px-4'}`}>
+        {/* Nav — each destination is a bubble on the sheet */}
+        <ul className={`flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden ${isCollapsed ? 'px-3' : 'px-4'}`}>
           {navItems.map((item) => {
             const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
             return (
@@ -92,46 +100,56 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
                   to={item.path}
                   onClick={onClose}
                   title={isCollapsed ? item.label : undefined}
-                  className={`flex items-center ${isCollapsed ? 'justify-center py-4' : 'gap-4 px-4 py-3'} rounded-xl transition-all ${
+                  className={`flex items-center ${isCollapsed ? 'justify-center py-3' : 'gap-3 px-3 py-2.5'} rounded-md transition-colors group ${
                     isActive
-                      ? 'bg-primary/10 text-primary font-bold'
-                      : 'text-on-surface-variant/70 hover:bg-surface-container-low hover:text-primary'
+                      ? 'bg-mark-mist text-mark-deep'
+                      : 'text-pencil hover:bg-surface-container-low hover:text-ink'
                   }`}
                 >
-                  <span className={`material-symbols-outlined shrink-0 ${isActive ? 'filled' : ''}`} style={{ fontVariationSettings: isActive ? "'FILL' 1" : "" }}>
-                    {item.icon}
+                  <span
+                    data-filled={isActive}
+                    className="bubble shrink-0"
+                    style={{ width: 26, height: 26 }}
+                  >
+                    <Icon name={item.icon} size={15} fill={isActive} />
                   </span>
-                  {!isCollapsed && <span className="text-sm whitespace-nowrap">{item.label}</span>}
+                  {!isCollapsed && (
+                    <span className={`text-sm whitespace-nowrap ${isActive ? 'font-semibold' : 'font-medium'}`}>{item.label}</span>
+                  )}
                 </Link>
               </li>
             );
           })}
         </ul>
 
-
-        
-        <div className={`border-t border-outline-variant py-4 ${isCollapsed ? 'px-2' : 'px-4'}`}>
+        <div className={`border-t border-hairline py-4 ${isCollapsed ? 'px-3' : 'px-4'}`}>
           {user ? (
-            <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3 px-2'} w-full rounded hover:bg-surface-container-low cursor-pointer py-2`} onClick={logOut} title="Log out">
+            <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3 px-2'} w-full rounded-md hover:bg-surface-container-low cursor-pointer py-2`} onClick={logOut} title="Sign out">
               {user.photoURL ? (
                 <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full shrink-0 object-cover" referrerPolicy="no-referrer" />
               ) : (
-                <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-[18px]">person</span>
+                <div className="w-8 h-8 rounded-full bg-mark-mist text-mark-deep flex items-center justify-center shrink-0">
+                  <Icon name="person" size={16} />
                 </div>
               )}
               {!isCollapsed && (
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold truncate text-on-surface">{user.displayName || 'User'}</p>
-                    <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest">Signed In</p>
-                  </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold truncate text-ink text-sm">{user.displayName || 'User'}</p>
+                  <p className="text-faint text-xs">Signed in — sync on</p>
+                </div>
               )}
             </div>
-          ) : (
-            <button onClick={signInWithGoogle} className={`flex items-center justify-center ${isCollapsed ? 'p-2' : 'gap-2 px-2 py-2'} w-full border border-outline-variant rounded hover:bg-surface-container-low transition-colors text-on-surface`} title="Log in">
-              <span className="material-symbols-outlined text-[18px]">login</span>
-              {!isCollapsed && <span className="text-sm whitespace-nowrap">Log in</span>}
+          ) : firebaseEnabled ? (
+            <button onClick={signInWithGoogle} className={`flex items-center justify-center ${isCollapsed ? 'p-2' : 'gap-2 px-2 py-2'} w-full border border-hairline-strong rounded-md hover:bg-surface-container-low transition-colors text-ink`} title="Sign in to sync">
+              <Icon name="login" size={18} />
+              {!isCollapsed && <span className="text-sm font-medium whitespace-nowrap">Sign in to sync</span>}
             </button>
+          ) : (
+            !isCollapsed && (
+              <p className="text-xs text-faint leading-relaxed px-2">
+                Working offline — data stays in this browser.
+              </p>
+            )
           )}
         </div>
       </motion.nav>

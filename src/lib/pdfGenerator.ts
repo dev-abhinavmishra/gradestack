@@ -26,8 +26,8 @@ export const generatePDF = async (test: Partial<Test>, onComplete?: () => void, 
       
       let currentY = height - 40;
 
-      // Banner
-      const brandColor = rgb(0.1, 0.4, 0.6);
+      // Banner — mark-sense green, the sheet's house colour
+      const brandColor = rgb(0.078, 0.376, 0.29); // #14604A
       page.drawRectangle({
          x: marginX, y: currentY - 40, 
          width: width - marginX * 2, height: 40,
@@ -56,18 +56,33 @@ export const generatePDF = async (test: Partial<Test>, onComplete?: () => void, 
          currentY -= (detailText.split('\n').length * 14) + 10;
       }
 
-      // Student ID Block
+      // Student ID block — real fillable fields so digitally-completed
+      // PDFs carry the student's name and id back into the app.
       if (test.includeStudentId !== false && p === 0) {
          const idBoxX = width - marginX - 220;
          const idBoxY = detailsTopY - 50;
          page.drawRectangle({ x: idBoxX, y: idBoxY, width: 220, height: 50, borderColor: brandColor, borderWidth: 1.5 });
-         
+
          page.drawText('STUDENT NAME:', { x: idBoxX + 10, y: idBoxY + 32, size: 7, font: helveticaBold, color: brandColor });
-         page.drawLine({ start: {x: idBoxX + 80, y: idBoxY + 32}, end: {x: idBoxX + 210, y: idBoxY + 32}, thickness: 0.5, color: rgb(0.7,0.7,0.7) });
-         
-         page.drawText('DATE:', { x: idBoxX + 10, y: idBoxY + 12, size: 7, font: helveticaBold, color: brandColor });
-         page.drawLine({ start: {x: idBoxX + 40, y: idBoxY + 12}, end: {x: idBoxX + 210, y: idBoxY + 12}, thickness: 0.5, color: rgb(0.7,0.7,0.7) });
-         
+         try {
+           const nameField = form.createTextField('student_name');
+           nameField.addToPage(page, {
+             x: idBoxX + 80, y: idBoxY + 26, width: 130, height: 12,
+             borderColor: rgb(0.7,0.7,0.7), borderWidth: 0.5,
+           });
+           nameField.setFontSize(9);
+         } catch(e) {}
+
+         page.drawText('ID:', { x: idBoxX + 10, y: idBoxY + 12, size: 7, font: helveticaBold, color: brandColor });
+         try {
+           const idField = form.createTextField('student_id');
+           idField.addToPage(page, {
+             x: idBoxX + 40, y: idBoxY + 6, width: 170, height: 12,
+             borderColor: rgb(0.7,0.7,0.7), borderWidth: 0.5,
+           });
+           idField.setFontSize(9);
+         } catch(e) {}
+
          if (idBoxY - 15 < currentY) {
              currentY = idBoxY - 15;
          }

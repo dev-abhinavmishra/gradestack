@@ -52,7 +52,7 @@ service cloud.firestore {
                        isValidTest(incoming()) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'date', 'numQuestions', 'format', 'courseName', 'instructorName']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'date', 'numQuestions', 'format', 'courseName', 'instructorName', 'sections', 'includeStudentId', 'answerKey']);
 
       allow delete: if isSignedIn() && isValidId(testId) && existing().userId == request.auth.uid;
     }
@@ -71,7 +71,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        incoming().testId == existing().testId &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['studentId', 'studentName', 'rawScore', 'maxScore', 'percentage', 'grade', 'needsReview']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['studentId', 'studentName', 'rawScore', 'maxScore', 'percentage', 'grade', 'needsReview', 'responses', 'imageData', 'batchName']);
 
       allow delete: if isSignedIn() && isValidId(scanId) && existing().userId == request.auth.uid;
     }

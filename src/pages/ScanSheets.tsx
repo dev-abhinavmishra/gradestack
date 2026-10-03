@@ -1,37 +1,57 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { useStore } from '../store';
+import { useStore, Scan } from '../store';
 import { useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { PDFDocument } from 'pdf-lib';
 import { GoogleGenAI, Type } from "@google/genai";
 import ReactCrop, { type Crop, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
+import { Icon, Button, Input, Select, Chip, Modal, BubbleMark, Field } from '../components/ui';
+import { gradeResponses, optionsFor, isMultiple, formatsForTest, normalizeAnswer, letterFor } from '../lib/grading';
+import { shrinkImage } from '../store';
 
 export function ScanSheets() {
   const tests = useStore(state => state.tests);
   const scans = useStore(state => state.scans);
   const addScan = useStore(state => state.addScan);
   const updateTest = useStore(state => state.updateTest);
-  
+  const updateScan = useStore(state => state.updateScan);
+  const deleteScans = useStore(state => state.deleteScans);
+  const gradingScale = useStore(state => state.gradingScale);
+  const partialCredit = useStore(state => state.partialCredit);
+  const geminiKey = useStore(state => state.geminiKey);
+
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const initialTestId = searchParams.get('testId');
   const initialScanId = searchParams.get('scanId');
-  
-  const [selectedTestId, setSelectedTestId] = useState<string>(initialTestId || (tests.length > 0 ? tests[0].id : ''));
+
+  const [selectedTestId, setSelectedTestId] = useState<string>(initialTestId || '');
   const [isScanning, setIsScanning] = useState(false);
   const [showDrawer, setShowDrawer] = useState(false);
   const [isEditingKey, setIsEditingKey] = useState(false);
   const [reviewScanId, setReviewScanId] = useState<string | null>(initialScanId || null);
   const [error, setError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedScansForDelete, setSelectedScansForDelete] = useState<Set<string>>(new Set());
 
-  // Function to delete scans
-  const deleteScans = useStore(state => state.deleteScans);
+  // Once tests load (or the deep-linked one resolves), pick the first by default
+  useEffect(() => {
+    if (!selectedTestId && tests.length > 0) {
+      setSelectedTestId(tests[0].id);
+    }
+  }, [tests, selectedTestId]);
+
+  // Keep the deep-linked test honored when tests arrive after mount
+  useEffect(() => {
+    if (initialTestId) setSelectedTestId(initialTestId);
+    if (initialScanId) setReviewScanId(initialScanId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTestId, initialScanId]);
 
   const toggleScanSelection = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -43,70 +63,133 @@ export function ScanSheets() {
 
   const handleDeleteSelected = async () => {
     if (selectedScansForDelete.size === 0) return;
-    if (deleteScans) {
-       await deleteScans(Array.from(selectedScansForDelete));
-    }
+    await deleteScans(Array.from(selectedScansForDelete));
     setSelectedScansForDelete(new Set());
   };
 
   const selectedTest = tests.find(t => t.id === selectedTestId);
   const currentScans = scans.filter(s => s.testId === selectedTestId);
   const scanToReview = scans.find(s => s.id === reviewScanId);
+  const testFormats = selectedTest ? formatsForTest(selectedTest.sections, selectedTest.numQuestions, selectedTest.format) : [];
 
-  const [batchName, setBatchName] = useState<string>('Default Batch');
+  const [batchName, setBatchName] = useState<string>('');
 
-  // Local state for manual score editing
-  const [editingScore, setEditingScore] = useState<number | null>(null);
-  
-  // Image Review & Cropping
+  // ── Review-modal edit state ────────────────────────────────
+  const [editingScore, setEditingScore] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editId, setEditId] = useState('');
+  const [editResponses, setEditResponses] = useState<Record<number, string>>({});
+  const [editingQ, setEditingQ] = useState<number | null>(null);
+
+  // Seed the review editor whenever a different scan is opened
+  useEffect(() => {
+    if (scanToReview) {
+      setEditName(scanToReview.studentName || '');
+      setEditId(scanToReview.studentId || '');
+      setEditResponses(scanToReview.responses ? { ...scanToReview.responses } : {});
+      setEditingScore(null);
+      setEditingQ(null);
+    }
+  }, [reviewScanId]);
+
+  // ── Image capture / crop state ─────────────────────────────
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [isReviewingImage, setIsReviewingImage] = useState(false);
   const [crop, setCrop] = useState<Crop>();
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
   const imgRef = useRef<HTMLImageElement>(null);
 
-  // Local state for editing answer key
-  const [localKey, setLocalKey] = useState<Record<number, string>>(selectedTest?.answerKey || {});
+  // ── Camera ─────────────────────────────────────────────────
+  const [cameraOn, setCameraOn] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setCameraOn(false);
+  }, []);
+
+  useEffect(() => () => stopCamera(), [stopCamera]);
+
+  const startCamera = async () => {
+    setError(null);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("This browser doesn't expose a camera — upload a photo instead.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOn(true);
+    } catch (e) {
+      setError("Camera was blocked or isn't available — upload a photo instead.");
+    }
+  };
+
+  useEffect(() => {
+    if (cameraOn && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [cameraOn]);
+
+  const captureFrame = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d')!.drawImage(video, 0, 0);
+    const url = canvas.toDataURL('image/jpeg', 0.92);
+    stopCamera();
+    setCapturedImage(url);
+    setIsReviewingImage(true);
+  };
+
+  // ── Answer key editor ──────────────────────────────────────
+  const [localKey, setLocalKey] = useState<Record<number, string>>({});
 
   const handleOpenKeyEditor = () => {
     setLocalKey(selectedTest?.answerKey || {});
     setIsEditingKey(true);
   };
 
-  // Sync localKey when selected test changes
   useEffect(() => {
     setLocalKey(selectedTest?.answerKey || {});
   }, [selectedTestId]);
 
+  const missingKeyCount = selectedTest
+    ? Array.from({ length: selectedTest.numQuestions }).filter((_, i) => !localKey[i + 1] || localKey[i + 1] === '').length
+    : 0;
+
   const handleSaveKey = () => {
-    if (!selectedTest) return;
-    const missingQs = Array.from({ length: selectedTest.numQuestions }).filter((_, i) => !localKey[i + 1] || localKey[i + 1] === '');
-    if (missingQs.length > 0) return;
-    
+    if (!selectedTest || missingKeyCount > 0) return;
     updateTest(selectedTest.id, { answerKey: localKey });
     setIsEditingKey(false);
   };
 
-  const getOptions = (format: string) => {
-    switch(format) {
-      case 'A-D': return ['A', 'B', 'C', 'D'];
-      case 'A-E': return ['A', 'B', 'C', 'D', 'E'];
-      case 'TF': return ['T', 'F'];
-      default: return ['A', 'B', 'C', 'D'];
-    }
-  };
+  const apiKey = geminiKey || (process.env.GEMINI_API_KEY as string | undefined);
+  const canScan = Boolean(selectedTest && selectedTest.answerKey && Object.keys(selectedTest.answerKey).length > 0);
 
+  // ── Grading ────────────────────────────────────────────────
   const gradeWithAI = async (base64Data: string, mimeType: string) => {
     if (!selectedTest) return;
-    
+
+    if (!apiKey || apiKey === 'undefined') {
+      setError("No Gemini key — add one in Settings, or upload a digitally filled PDF instead.");
+      return;
+    }
+
     setIsScanning(true);
     setError(null);
-    
+
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const prompt = `You are an expert grading assistant. 
+      const ai = new GoogleGenAI({ apiKey });
+
+      const prompt = `You are an expert grading assistant.
       Analyze the provided ${mimeType === 'application/pdf' ? 'PDF document' : 'image'} of an answer sheet.
       The sheet belongs to an assessment with ${selectedTest.numQuestions} questions.
       Extract the student's selected answers for each question based on the bubble sheet markings or short handwritten answers.
@@ -116,7 +199,7 @@ export function ScanSheets() {
       Return the results as a JSON object.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash",
         contents: [
           {
             parts: [
@@ -145,51 +228,30 @@ export function ScanSheets() {
 
       const result = JSON.parse(response.text || '{}');
       const aiResponses: Record<number, string> = {};
-      
-      // Normalize responses
+
       Object.entries(result.responses || {}).forEach(([k, v]) => {
         aiResponses[Number(k)] = String(v).toUpperCase();
       });
 
-      // Calculate score
-      let rawScore = 0;
-      let reviewRecommended = false;
-      
-      for (let i = 1; i <= selectedTest.numQuestions; i++) {
-        const studentAns = aiResponses[i];
-        const correctAns = selectedTest.answerKey?.[i] || '';
-        
-        if (!studentAns || studentAns === '?') {
-          reviewRecommended = true;
-        } else if (studentAns.toLowerCase().trim() === correctAns.toLowerCase().trim()) {
-          rawScore++;
-        }
-      }
+      const grade = gradeResponses(aiResponses, selectedTest.answerKey, selectedTest.numQuestions, gradingScale, partialCredit);
+      const image = await shrinkImage(base64Data);
 
-      const pct = Math.round((rawScore / selectedTest.numQuestions) * 100);
-      let grade = 'F';
-      if (pct >= 90) grade = 'A';
-      else if (pct >= 80) grade = 'B';
-      else if (pct >= 70) grade = 'C';
-      else if (pct >= 60) grade = 'D';
-
-      addScan({
+      await addScan({
         testId: selectedTest.id,
         studentId: result.studentId || String(Math.floor(10000 + Math.random() * 90000)),
-        studentName: result.studentName || "Captured Sheet",
-        rawScore,
-        maxScore: selectedTest.numQuestions,
-        percentage: pct,
-        grade,
-        needsReview: reviewRecommended,
+        studentName: result.studentName || "Unnamed sheet",
+        rawScore: grade.rawScore,
+        maxScore: grade.maxScore,
+        percentage: grade.percentage,
+        grade: grade.grade,
+        needsReview: grade.needsReview,
         responses: aiResponses,
-        imageData: base64Data,
+        imageData: image,
         batchName: batchName || undefined
       });
-
     } catch (err) {
       console.error(err);
-      setError("AI Grading failed. Please ensure the image is clear and try again.");
+      setError("The reader couldn't grade that image. Try a sharper, brighter photo — or check the Gemini key in Settings.");
     } finally {
       setIsScanning(false);
     }
@@ -200,35 +262,24 @@ export function ScanSheets() {
     if (!file) return;
 
     if (file.type === 'application/pdf') {
-       setError("Use the 'Upload PDFs' button for digital PDF documents.");
-       e.target.value = '';
-       return;
+      void gradePDFs([file]);
+      e.target.value = '';
+      return;
     }
 
-    setPreviewFile(file);
     const reader = new FileReader();
     reader.onload = (event) => {
       setCapturedImage(event.target?.result as string);
       setIsReviewingImage(true);
     };
     reader.readAsDataURL(file);
-    
-    // Clear input so same file can be selected again
     e.target.value = '';
   };
 
   const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const { width, height } = e.currentTarget;
     const initialCrop = centerCrop(
-      makeAspectCrop(
-        {
-          unit: '%',
-          width: 90,
-        },
-        1 / 1.4,
-        width,
-        height
-      ),
+      makeAspectCrop({ unit: '%', width: 90 }, 1 / 1.4, width, height),
       width,
       height
     );
@@ -242,22 +293,14 @@ export function ScanSheets() {
     canvas.width = pixelCrop.width;
     canvas.height = pixelCrop.height;
     const ctx = canvas.getContext('2d');
-
     if (!ctx) throw new Error('No 2d context');
-
     ctx.drawImage(
       image,
-      pixelCrop.x * scaleX,
-      pixelCrop.y * scaleY,
-      pixelCrop.width * scaleX,
-      pixelCrop.height * scaleY,
-      0,
-      0,
-      pixelCrop.width,
-      pixelCrop.height
+      pixelCrop.x * scaleX, pixelCrop.y * scaleY,
+      pixelCrop.width * scaleX, pixelCrop.height * scaleY,
+      0, 0, pixelCrop.width, pixelCrop.height
     );
-
-    return canvas.toDataURL('image/jpeg');
+    return canvas.toDataURL('image/jpeg', 0.9);
   };
 
   const handleConfirmCrop = async () => {
@@ -266,7 +309,6 @@ export function ScanSheets() {
       setIsReviewingImage(false);
       gradeWithAI(croppedBase64, 'image/jpeg');
     } else if (capturedImage) {
-      // Fallback to original image if no crop
       setIsReviewingImage(false);
       gradeWithAI(capturedImage, 'image/jpeg');
     }
@@ -278,42 +320,43 @@ export function ScanSheets() {
     fileInputRef.current?.click();
   };
 
-  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const filesList = e.target.files;
-    if (!filesList || filesList.length === 0) return;
-    
+  // ── Digitally-filled PDFs — graded locally, no AI ──────────
+  const gradePDFs = async (files: File[]) => {
+    if (!selectedTest) return;
     setIsScanning(true);
     setError(null);
     let errorCount = 0;
-    
-    for (let i = 0; i < filesList.length; i++) {
-      const file = filesList[i];
+
+    for (const file of files) {
       if (file.type === 'application/pdf') {
         const success = await gradePDFProgrammatically(file);
         if (!success) errorCount++;
+      } else {
+        errorCount++;
       }
     }
-    
+
     setIsScanning(false);
     if (errorCount > 0) {
-      setError(`Failed to process ${errorCount} PDF(s). Ensure they are digitally filled PDFs exported from GradeStack.`);
+      setError(`${errorCount} file${errorCount > 1 ? 's' : ''} couldn't be read. Only digitally filled PDFs exported from GradeStack work — photos go through "Upload photo".`);
     }
-    
+  };
+
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const filesList = e.target.files;
+    if (filesList && filesList.length > 0) await gradePDFs(Array.from(filesList));
     e.target.value = '';
   };
 
   const gradePDFProgrammatically = async (file: File): Promise<boolean> => {
     if (!selectedTest) return false;
-    
+
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdfDoc = await PDFDocument.load(arrayBuffer);
       const form = pdfDoc.getForm();
       const fields = form.getFields();
-
-      if (fields.length === 0) {
-        throw new Error("No fields found");
-      }
+      if (fields.length === 0) throw new Error("No fields found");
 
       const studentResponses: Record<number, string> = {};
       let studentName = "";
@@ -322,74 +365,57 @@ export function ScanSheets() {
       fields.forEach(field => {
         const name = field.getName();
         if (name === 'student_name') {
-           try { studentName = (field as any).getText(); } catch(e) {}
+          try { studentName = (field as any).getText(); } catch (e) {}
         } else if (name === 'student_id') {
-           try { studentId = (field as any).getText(); } catch(e) {}
+          try { studentId = (field as any).getText(); } catch (e) {}
         } else if (name.startsWith('q.')) {
-           const parts = name.split('.');
-           const qNum = parseInt(parts[1]);
-           const option = parts[2];
-           
-           if (!isNaN(qNum)) {
-             if (field.constructor.name === 'PDFRadioGroup' || (field as any).getSelected) {
-                try {
-                  const selected = (field as any).getSelected();
-                  if (typeof selected === 'string' && selected && selected !== 'Off') {
-                    studentResponses[qNum] = selected;
-                  }
-                } catch (e) {}
-             } else if (field.constructor.name === 'PDFCheckBox' || (field as any).isChecked) {
-                if ((field as any).isChecked && (field as any).isChecked()) {
-                   if (studentResponses[qNum]) {
-                      const existing = studentResponses[qNum].split(',');
-                      if (!existing.includes(option)) {
-                        studentResponses[qNum] = [...existing, option].sort().join(',');
-                      }
-                   } else if (option) {
-                      studentResponses[qNum] = option;
-                   }
+          const parts = name.split('.');
+          const qNum = parseInt(parts[1]);
+          const option = parts[2];
+          if (!isNaN(qNum)) {
+            if (field.constructor.name === 'PDFRadioGroup' || (field as any).getSelected) {
+              try {
+                const selected = (field as any).getSelected();
+                if (typeof selected === 'string' && selected && selected !== 'Off') {
+                  studentResponses[qNum] = selected;
                 }
-             } else if (field.constructor.name === 'PDFTextField' || (field as any).getText) {
-                try {
-                  const text = (field as any).getText();
-                  if (text) studentResponses[qNum] = text;
-                } catch(e) {}
-             }
-           }
+              } catch (e) {}
+            } else if (field.constructor.name === 'PDFCheckBox' || (field as any).isChecked) {
+              if ((field as any).isChecked && (field as any).isChecked()) {
+                if (studentResponses[qNum]) {
+                  const existing = studentResponses[qNum].split(',');
+                  if (!existing.includes(option)) {
+                    studentResponses[qNum] = [...existing, option].sort().join(',');
+                  }
+                } else if (option) {
+                  studentResponses[qNum] = option;
+                }
+              }
+            } else if (field.constructor.name === 'PDFTextField' || (field as any).getText) {
+              try {
+                const text = (field as any).getText();
+                if (text) studentResponses[qNum] = text;
+              } catch (e) {}
+            }
+          }
         }
       });
 
-      // Calculate score
-      let rawScore = 0;
-      for (let i = 1; i <= selectedTest.numQuestions; i++) {
-        const studentAns = studentResponses[i];
-        const correctAns = selectedTest.answerKey?.[i] || '';
-        if (studentAns && studentAns.toLowerCase().trim() === correctAns.toLowerCase().trim()) {
-          rawScore++;
-        }
-      }
-
-      const pct = Math.round((rawScore / selectedTest.numQuestions) * 100);
-      let grade = 'F';
-      if (pct >= 90) grade = 'A';
-      else if (pct >= 80) grade = 'B';
-      else if (pct >= 70) grade = 'C';
-      else if (pct >= 60) grade = 'D';
+      const grade = gradeResponses(studentResponses, selectedTest.answerKey, selectedTest.numQuestions, gradingScale, partialCredit);
 
       await addScan({
         testId: selectedTest.id,
         studentId: studentId || "PDF-" + Math.floor(1000 + Math.random() * 9000),
-        studentName: studentName || file.name,
-        rawScore,
-        maxScore: selectedTest.numQuestions,
-        percentage: pct,
-        grade,
-        needsReview: false,
+        studentName: studentName || file.name.replace(/\.pdf$/i, ''),
+        rawScore: grade.rawScore,
+        maxScore: grade.maxScore,
+        percentage: grade.percentage,
+        grade: grade.grade,
+        needsReview: grade.needsReview,
         responses: studentResponses,
         imageData: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOGwtNi02eiIvPjxwb2x5bGluZSBwb2ludHM9IjE0IDIgMTQgOCAyMCA4Ii8+PC9zdmc+",
         batchName: batchName || undefined
       });
-
       return true;
     } catch (err) {
       console.error(err);
@@ -397,519 +423,541 @@ export function ScanSheets() {
     }
   };
 
-  const handleUpdateScore = (scanId: string, newScore: number) => {
-    if (!selectedTest) return;
-    const max = selectedTest.numQuestions;
-    const cappedScore = Math.min(max, Math.max(0, newScore));
-    const pct = Math.round((cappedScore / max) * 100);
-    
-    let grade = 'F';
-    if (pct >= 90) grade = 'A';
-    else if (pct >= 80) grade = 'B';
-    else if (pct >= 70) grade = 'C';
-    else if (pct >= 60) grade = 'D';
+  // ── Review-modal save — re-grade from corrected responses ──
+  const handleSaveReview = () => {
+    if (!scanToReview || !selectedTest) return;
+    const merged = { ...(scanToReview.responses || {}), ...editResponses };
+    const hasResponses = Object.keys(merged).length > 0;
 
-    useStore.getState().updateScan(scanId, {
-      rawScore: cappedScore,
-      percentage: pct,
-      grade,
-      needsReview: false
+    const updates: Partial<Scan> = {
+      studentName: editName.trim() || scanToReview.studentName,
+      studentId: editId.trim() || scanToReview.studentId,
+      responses: merged,
+      needsReview: false,
+    };
+
+    if (editingScore !== null && editingScore !== '') {
+      // Manual override wins over computed score
+      const capped = Math.min(scanToReview.maxScore, Math.max(0, parseFloat(editingScore) || 0));
+      updates.rawScore = capped;
+      updates.percentage = scanToReview.maxScore > 0 ? Math.round((capped / scanToReview.maxScore) * 100) : 0;
+      updates.grade = letterFor(updates.percentage, gradingScale);
+    } else if (hasResponses) {
+      const g = gradeResponses(merged, selectedTest.answerKey, scanToReview.maxScore, gradingScale, partialCredit);
+      updates.rawScore = g.rawScore;
+      updates.percentage = g.percentage;
+      updates.grade = g.grade;
+      updates.needsReview = g.needsReview;
+    }
+
+    void updateScan(scanToReview.id, updates);
+    setReviewScanId(null);
+  };
+
+  const markResponse = (qNum: number, opt: string, multi: boolean) => {
+    setEditResponses(prev => {
+      if (multi) {
+        const cur = prev[qNum] ? prev[qNum].split(',').filter(Boolean) : [];
+        const next = cur.includes(opt) ? cur.filter(o => o !== opt) : [...cur, opt];
+        next.sort();
+        return { ...prev, [qNum]: next.join(',') };
+      }
+      return { ...prev, [qNum]: prev[qNum] === opt ? '' : opt };
     });
-    
-    setEditingScore(null);
+  };
+
+  // ── Drag & drop ────────────────────────────────────────────
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (!canScan || isScanning) return;
+    const files = Array.from(e.dataTransfer.files);
+    const images = files.filter(f => f.type.startsWith('image/'));
+    const pdfs = files.filter(f => f.type === 'application/pdf');
+    if (pdfs.length) await gradePDFs(pdfs);
+    if (images.length) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setCapturedImage(ev.target?.result as string);
+        setIsReviewingImage(true);
+      };
+      reader.readAsDataURL(images[0]);
+    }
   };
 
   return (
-    <div className="flex-1 flex flex-col md:flex-row h-full relative bg-[#0B0E14] text-white w-full overflow-hidden">
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-        accept="image/*" 
-        className="hidden" 
-      />
-      <input 
-        type="file" 
-        multiple
-        ref={pdfInputRef} 
-        onChange={handlePdfUpload} 
-        accept="application/pdf" 
-        className="hidden" 
-      />
+    <div className="flex-1 flex flex-col md:flex-row h-full relative text-ink w-full overflow-hidden">
+      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*,.pdf" className="hidden" />
+      <input type="file" multiple ref={pdfInputRef} onChange={handlePdfUpload} accept="application/pdf" className="hidden" />
 
-      {/* Mobile Top Header */}
-      <header className="md:hidden flex items-center justify-between p-4 bg-surface text-on-surface border-b border-outline-variant z-40 w-full shrink-0">
-        <h1 className="text-xl font-bold text-primary">Scan Responses</h1>
-        <button onClick={() => setShowDrawer(!showDrawer)} className="p-2 rounded-full bg-surface-container text-on-surface hover:bg-surface-variant transition-colors flex items-center gap-2">
-          <span className="material-symbols-outlined">{showDrawer ? 'close' : 'analytics'}</span>
-          <span className="text-xs font-bold pr-1">BATCH</span>
+      {/* Mobile header */}
+      <header className="md:hidden flex items-center justify-between px-5 h-14 bg-form border-b border-hairline z-40 w-full shrink-0">
+        <h1 className="font-display text-xl font-semibold text-ink">Scan sheets</h1>
+        <button onClick={() => setShowDrawer(!showDrawer)} className="p-2 rounded-md text-pencil hover:text-ink hover:bg-surface-container-low transition-colors flex items-center gap-1.5">
+          <Icon name={showDrawer ? 'close' : 'list_alt'} size={20} />
+          <span className="text-xs font-semibold">Queue</span>
         </button>
       </header>
-      
-      <div className="flex-1 relative overflow-hidden flex flex-col items-center justify-center">
-        <div 
-          className="absolute inset-0 bg-cover bg-center opacity-30 grayscale-[0.5] bg-[url('https://images.unsplash.com/photo-1434030216411-0b793f4b4173?ixlib=rb-4.0.3&auto=format&fit=crop&w=2000&q=80')]" 
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-primary/20 via-black/40 to-black/80"></div>
-        
-        <div className="relative w-[90%] max-w-sm aspect-[1/1.4] border-[1.5px] border-white/20 rounded-2xl flex flex-col items-center justify-center z-10 pointer-events-none mb-16 overflow-hidden">
-          {/* Scanning Animation */}
+
+      {/* ── Reading surface ─────────────────────────────────── */}
+      <div
+        className={`flex-1 relative overflow-hidden flex flex-col items-center justify-center bg-[#131A15] ${isDragging ? 'outline-dashed outline-2 outline-mark outline-offset-[-12px]' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={handleDrop}
+      >
+        {/* faint ruled texture — the only decoration, earned by the subject */}
+        <div className="absolute inset-0 opacity-[0.05] pointer-events-none"
+          style={{ backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 27px, #fff 27px, #fff 28px)' }} />
+
+        {/* Status strip */}
+        <div className="absolute top-5 left-5 z-20 hidden md:flex items-center gap-3">
+          <div className="bg-white/5 backdrop-blur-sm border border-white/10 px-4 py-2.5 rounded-md flex items-center gap-3">
+            <BubbleMark size={7} className="text-[#8FC7AC]" />
+            <div className="flex flex-col">
+              <span className="text-[11px] font-semibold text-white/90 leading-tight">{selectedTest?.name || 'No assessment selected'}</span>
+              <span className="text-[10px] text-white/50 leading-tight mt-0.5">
+                {selectedTest
+                  ? canScan
+                    ? `${Object.keys(selectedTest!.answerKey!).length}/${selectedTest.numQuestions} key marked`
+                    : 'Answer key not set'
+                  : 'Pick an assessment to start'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* The mark frame — real guidance, not decoration */}
+        <div className="relative w-[90%] max-w-[300px] md:max-w-sm aspect-[1/1.4] z-10 mb-40 md:mb-20">
+          {cameraOn ? (
+            <div className="absolute inset-4 overflow-hidden rounded-md border border-[#8FC7AC]/40 bg-black">
+              <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            </div>
+          ) : (
+            <div className="absolute inset-4 rounded-md border border-dashed border-white/25" />
+          )}
+
+          {/* Corner marks */}
+          <div className="absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 border-[#8FC7AC] rounded-tl-md"></div>
+          <div className="absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 border-[#8FC7AC] rounded-tr-md"></div>
+          <div className="absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 border-[#8FC7AC] rounded-bl-md"></div>
+          <div className="absolute bottom-0 right-0 w-7 h-7 border-b-2 border-r-2 border-[#8FC7AC] rounded-br-md"></div>
+
           {isScanning && (
-            <motion.div 
+            <motion.div
               initial={{ top: '0%' }}
               animate={{ top: '100%' }}
               transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
-              className="absolute left-0 right-0 h-[2px] bg-primary shadow-[0_0_15px_var(--color-primary)] z-20"
+              className="absolute left-0 right-0 h-[2px] bg-[#8FC7AC] shadow-[0_0_15px_#8FC7AC] z-20"
             />
           )}
 
-          <div className="absolute top-4 left-4 w-6 h-6 border-t-2 border-l-2 border-white/40 rounded-tl-lg"></div>
-          <div className="absolute top-4 right-4 w-6 h-6 border-t-2 border-r-2 border-white/40 rounded-tr-lg"></div>
-          <div className="absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-white/40 rounded-bl-lg"></div>
-          <div className="absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-white/40 rounded-br-lg"></div>
-          
-          <div className="absolute -bottom-14 w-full text-center">
-            <p className="text-lg font-bold text-white drop-shadow-md tracking-wide">
-              {isScanning ? 'AI GRADING...' : 'CENTER SHEET IN VIEW'}
-            </p>
-          </div>
         </div>
 
         {error && (
-          <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 bg-error text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-bounce">
-            <span className="material-symbols-outlined">error</span>
-            <span className="text-sm font-bold">{error}</span>
+          <div className="absolute top-5 left-1/2 -translate-x-1/2 z-30 max-w-md bg-red text-white px-5 py-3 rounded-md shadow-2xl flex items-start gap-3">
+            <Icon name="error" size={18} />
+            <span className="text-sm font-medium leading-snug">{error}</span>
+            <button onClick={() => setError(null)} className="ml-1 opacity-70 hover:opacity-100"><Icon name="close" size={16} /></button>
           </div>
         )}
 
-        {/* Global UI Overlays */}
-        <div className="absolute top-6 left-6 z-20 hidden md:block">
-           <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl flex flex-col gap-1 min-w-[180px]">
-              <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Active Session</span>
-              <span className="text-sm font-bold text-white">{selectedTest?.name || 'Select Assessment'}</span>
-              <div className="flex items-center gap-2 mt-2">
-                 <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
-                 <span className="text-[11px] font-medium text-success uppercase">System Ready</span>
-              </div>
-           </div>
-        </div>
-
-        <div className="absolute top-6 right-6 z-20 hidden md:flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-full">
-          <span className="material-symbols-outlined text-[16px] text-primary-container">lightbulb</span>
-          <span className="text-[11px] font-bold text-white/90 uppercase tracking-tight">Optimal Lighting</span>
-        </div>
-
-        <div className="absolute bottom-0 inset-x-0 p-10 bg-gradient-to-t from-black/80 to-transparent flex flex-col items-center justify-end z-20 pb-16 h-64 pointer-events-none">
-          <button 
-            disabled={!selectedTestId || isScanning || (!selectedTest || !selectedTest.answerKey)}
-            onClick={() => fileInputRef.current?.click()}
-            className={`w-24 h-24 rounded-full border-[6px] border-white/10 flex items-center justify-center transition-all pointer-events-auto backdrop-blur-sm
-              ${(!selectedTestId || !selectedTest?.answerKey) ? 'opacity-20 cursor-not-allowed grayscale' : 'hover:scale-105 active:scale-90 shadow-[0_0_30px_rgba(255,255,255,0.1)]'}`
-            }
-          >
-            <div className={`w-16 h-16 rounded-full transition-all flex items-center justify-center shadow-inner
-              ${isScanning ? 'bg-primary-container scale-90' : 'bg-white group-hover:bg-primary-container'}`}
-            >
-              <span className={`material-symbols-outlined text-4xl transform transition-transform ${isScanning ? 'rotate-180 text-primary animate-spin' : 'text-primary'}`}>
-                {isScanning ? 'sync' : 'photo_camera'}
-              </span>
-            </div>
-          </button>
-          <p className="text-sm font-medium text-white/60 mt-6 tracking-wide uppercase">
-            {selectedTestId 
-              ? (selectedTest?.answerKey ? 'UPLOAD OR CAPTURE SHEET' : 'Set answer key first') 
-              : 'Select a test to begin'}
+        {/* Capture bar */}
+        <div className="absolute bottom-0 inset-x-0 pb-6 md:pb-8 pt-14 bg-gradient-to-t from-black/70 to-transparent flex flex-col items-center gap-3.5 z-20">
+          <p className="text-sm font-semibold text-white/85 px-4 text-center">
+            {isScanning ? 'Reading the sheet…' : cameraOn ? 'Frame the sheet between the marks' : isDragging ? 'Drop to grade' : 'Center the sheet between the marks'}
+          </p>
+          <div className="flex items-center justify-center flex-wrap gap-2.5 md:gap-3 px-3">
+            {cameraOn ? (
+              <>
+                <button
+                  onClick={captureFrame}
+                  disabled={!canScan || isScanning}
+                  className="w-16 h-16 rounded-full bg-[#8FC7AC] text-[#10231B] flex items-center justify-center hover:bg-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-lg"
+                  title="Capture frame"
+                >
+                  <Icon name="photo_camera" size={26} />
+                </button>
+                <button
+                  onClick={stopCamera}
+                  className="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-colors"
+                  title="Turn camera off"
+                >
+                  <Icon name="close" size={18} />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={startCamera}
+                  disabled={!canScan || isScanning}
+                  className="flex items-center gap-2 bg-[#8FC7AC] text-[#10231B] font-semibold text-sm px-4 md:px-6 h-11 md:h-12 rounded-md hover:bg-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Icon name="photo_camera" size={20} />
+                  Use camera
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!canScan || isScanning}
+                  className="flex items-center gap-2 bg-white/10 border border-white/25 text-white font-semibold text-sm px-4 md:px-6 h-11 md:h-12 rounded-md hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Icon name="image" size={18} />
+                  Upload photo
+                </button>
+                <button
+                  onClick={() => pdfInputRef.current?.click()}
+                  disabled={!canScan || isScanning}
+                  className="flex items-center gap-2 text-white/70 font-semibold text-sm px-3 md:px-4 h-11 md:h-12 rounded-md hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Digitally filled GradeStack PDFs"
+                >
+                  <Icon name="upload_file" size={18} />
+                  Filled PDFs
+                </button>
+              </>
+            )}
+          </div>
+          <p className="text-xs font-medium text-white/50">
+            {selectedTestId
+              ? canScan
+                ? 'Or drop a photo or filled PDF anywhere on this surface'
+                : 'Set the answer key first — it lives with the assessment'
+              : 'Choose an assessment in the queue panel'}
           </p>
         </div>
       </div>
 
-      <aside className={`absolute md:static inset-y-0 right-0 w-full sm:w-96 bg-surface border-l border-outline-variant z-30 transform transition-transform ${showDrawer ? 'translate-x-0' : 'translate-x-full md:translate-x-0'} flex flex-col shadow-[-4px_0_30px_rgba(0,0,0,0.1)] md:shadow-none text-on-surface`}>
-        <div className="p-6 border-b border-outline-variant bg-surface-container-low mt-16 md:mt-0">
-           <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">TARGET ASSESSMENT</label>
-           <div className="relative mb-4 group">
-              <select 
-                value={selectedTestId} 
-                onChange={(e) => setSelectedTestId(e.target.value)}
-                className="w-full bg-surface text-on-surface rounded-xl p-3 pr-10 font-bold border border-outline-variant focus:border-primary focus:ring-2 focus:ring-primary/20 appearance-none outline-none cursor-pointer transition-all hover:bg-surface-container-lowest"
-              >
-                <option value="" disabled>-- Select Assessment --</option>
-                {tests.map(t => <option key={t.id} value={t.id}>{t.name || 'Untitled'} ({new Date(t.date).toLocaleDateString()})</option>)}
-              </select>
-              <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant group-hover:text-primary transition-colors pointer-events-none">expand_more</span>
-           </div>
+      {/* ── Queue panel ─────────────────────────────────────── */}
+      <aside className={`absolute md:static inset-y-0 right-0 w-full sm:w-[380px] bg-form border-l border-hairline z-30 transform transition-transform ${showDrawer ? 'translate-x-0' : 'translate-x-full md:translate-x-0'} flex flex-col shadow-2xl md:shadow-none text-ink`}>
+        <div className="p-5 border-b border-hairline space-y-4 mt-14 md:mt-0">
+          <Field label="Assessment">
+            <Select
+              value={selectedTestId}
+              onChange={(e) => setSelectedTestId(e.target.value)}
+            >
+              <option value="" disabled>Choose an assessment</option>
+              {tests.map(t => <option key={t.id} value={t.id}>{t.name || 'Untitled'} — {new Date(t.date).toLocaleDateString()}</option>)}
+            </Select>
+          </Field>
 
-           <div className="mb-6">
-             <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">BATCH / CLASS PERIOD</label>
-             <input 
-               type="text" 
-               value={batchName} 
-               onChange={(e) => setBatchName(e.target.value)} 
-               placeholder="e.g. Period 1" 
-               className="w-full bg-surface text-on-surface rounded-xl p-3 font-bold border border-outline-variant focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all" 
-             />
-           </div>
+          <Field label="Batch or class period" hint="Tagged on every sheet you grade this session">
+            <Input
+              type="text"
+              value={batchName}
+              onChange={(e) => setBatchName(e.target.value)}
+              placeholder="e.g. Period 1"
+            />
+          </Field>
 
-           {selectedTest && (
-             <div className="flex gap-2">
-               <button 
-                 onClick={handleOpenKeyEditor}
-                 className="flex-1 py-3 px-2 bg-primary/10 text-primary flex justify-center items-center gap-1 rounded-xl transition-all hover:bg-primary/20 font-bold text-xs"
-               >
-                 <span className="material-symbols-outlined text-[18px]">edit_note</span>
-                 EDIT KEY
-               </button>
-               <button 
-                 onClick={() => pdfInputRef.current?.click()}
-                 className="flex-1 py-3 px-2 bg-primary text-white flex justify-center items-center gap-1 rounded-xl transition-all hover:bg-primary/90 hover:shadow-md font-bold text-xs shadow-sm"
-               >
-                 <span className="material-symbols-outlined text-[18px]">upload_file</span>
-                 UPLOAD PDFs
-               </button>
-             </div>
-           )}
-        </div>
-        
-        <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-surface-container-lowest shrink-0 sticky top-0 z-20">
-          <div className="flex items-center gap-3">
-             <h2 className="text-xl font-bold text-primary">Live Queue</h2>
-             <span className="px-2 py-0.5 bg-primary/5 text-primary rounded-full font-bold text-[10px] border border-primary/10 tracking-widest uppercase">{currentScans.length} IN BATCH</span>
-          </div>
-          {selectedScansForDelete.size > 0 && (
-             <button
-               onClick={handleDeleteSelected}
-               className="text-[11px] font-bold text-error bg-error/10 hover:bg-error/20 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 uppercase tracking-wider"
-             >
-               <span className="material-symbols-outlined text-[14px]">delete</span>
-               Delete ({selectedScansForDelete.size})
-             </button>
+          {selectedTest && (
+            <div className="flex gap-2">
+              <Button variant="outline" icon="fact_check" onClick={handleOpenKeyEditor} className="flex-1 h-10 text-xs">
+                Answer key
+              </Button>
+              <Button variant="mist" icon="upload_file" onClick={() => pdfInputRef.current?.click()} className="flex-1 h-10 text-xs" disabled={!canScan}>
+                Filled PDFs
+              </Button>
+            </div>
           )}
         </div>
-        
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-surface-container-low">
-          {currentScans.map((scan) => (
-            <motion.div 
-              layout
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              key={scan.id} 
-              onClick={() => setReviewScanId(scan.id)}
-              className={`flex items-center gap-4 p-4 border rounded-2xl cursor-pointer transition-all relative ${!scan.needsReview ? 'bg-surface border-outline shadow-sm hover:border-primary hover:shadow-md' : 'bg-error-container/10 border-error-container shadow-sm hover:bg-error-container/20 group'} ${selectedScansForDelete.has(scan.id) ? 'ring-2 ring-error border-transparent' : ''}`}
+
+        <div className="px-5 py-3.5 border-b border-hairline flex justify-between items-center bg-surface-container-low shrink-0">
+          <div className="flex items-center gap-3">
+            <h2 className="font-display text-lg font-semibold">Queue</h2>
+            <span className="font-mono text-xs font-semibold text-pencil">{currentScans.length}</span>
+          </div>
+          {selectedScansForDelete.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              className="text-xs font-semibold text-red hover:bg-red-mist px-2.5 py-1.5 rounded-md transition-colors flex items-center gap-1"
             >
-              <div 
-                 onClick={(e) => toggleScanSelection(scan.id, e)}
-                 className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${selectedScansForDelete.has(scan.id) ? 'bg-error border-error text-white' : 'border-outline-variant text-transparent hover:border-error'}`}
+              <Icon name="delete" size={14} />
+              Delete {selectedScansForDelete.size}
+            </button>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto bg-surface-container-low">
+          {currentScans.map((scan) => (
+            <div
+              key={scan.id}
+              onClick={() => setReviewScanId(scan.id)}
+              className={`flex items-center gap-3 px-5 py-3.5 border-b border-hairline cursor-pointer transition-colors ${scan.needsReview ? 'bg-red-mist/40 hover:bg-red-mist/70' : 'hover:bg-mark-mist-2'} ${selectedScansForDelete.has(scan.id) ? 'bg-red-mist/70' : ''}`}
+            >
+              <button
+                onClick={(e) => toggleScanSelection(scan.id, e)}
+                data-filled={selectedScansForDelete.has(scan.id)}
+                className="bubble shrink-0"
+                style={{ width: 20, height: 20 }}
+                title="Select for delete"
               >
-                  <span className="material-symbols-outlined text-[14px]">check</span>
-              </div>
-              
-              <div className={`w-14 h-14 rounded-xl flex-shrink-0 flex items-center justify-center relative overflow-hidden ${!scan.needsReview ? 'bg-surface-container-high border border-outline' : 'bg-error-container text-error'}`}>
-                 {scan.imageData ? (
-                   <img src={scan.imageData} className="absolute inset-0 w-full h-full object-cover opacity-60" />
-                 ) : (
-                   <div className="absolute inset-0 bg-primary/5 animate-pulse opacity-50"></div>
-                 )}
-                 <span className={`material-symbols-outlined z-10 ${!scan.needsReview ? 'text-primary' : 'text-error'}`}>
-                  {!scan.needsReview ? 'check_circle' : 'priority_high'}
-                </span>
-              </div>
+                {selectedScansForDelete.has(scan.id) && <Icon name="check" size={12} />}
+              </button>
+
               <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                   <p className="text-xs font-bold text-on-surface-variant uppercase tracking-tight">
-                     ID: {scan.studentId}
-                     {scan.batchName && <span className="ml-2 px-1.5 py-0.5 bg-outline-variant/30 rounded text-[9px]">{scan.batchName}</span>}
-                   </p>
-                   {!scan.needsReview ? (
-                     <span className="text-[10px] font-bold text-success uppercase">SAVED</span>
-                   ) : (
-                     <span className="text-[10px] font-bold text-error uppercase group-hover:underline">Manual Review</span>
-                   )}
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-ink truncate">{scan.studentName}</p>
+                  <span className={`font-mono text-sm font-semibold ${scan.needsReview ? 'text-red' : 'text-mark-deep'}`}>
+                    {scan.percentage}%
+                  </span>
                 </div>
-                <p className={`text-lg font-bold truncate mt-1 ${scan.needsReview ? 'text-error' : 'text-primary'}`}>
-                  {scan.percentage}% Correct
-                </p>
-                <div className="flex items-center gap-2 mt-1">
-                   <div className="w-full bg-outline-variant rounded-full h-1">
-                      <div className={`h-full rounded-full transition-all duration-1000 ${scan.needsReview ? 'bg-error' : 'bg-primary'}`} style={{ width: `${scan.percentage}%` }}></div>
-                   </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="font-mono text-[11px] text-pencil">{scan.studentId}</span>
+                  {scan.batchName && <Chip tone="neutral">{scan.batchName}</Chip>}
+                  {scan.needsReview && <Chip tone="red">review</Chip>}
                 </div>
               </div>
-            </motion.div>
+            </div>
           ))}
           {currentScans.length === 0 && (
-            <div className="text-center py-20 px-6">
-              <div className="w-16 h-16 bg-outline-variant/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                 <span className="material-symbols-outlined text-[32px] text-outline">photo_camera</span>
-              </div>
-              <p className="text-sm font-bold text-on-surface-variant/40 uppercase tracking-widest">No scans detected</p>
+            <div className="text-center py-16 px-6">
+              <BubbleMark size={8} className="text-faint mx-auto mb-4" />
+              <p className="text-sm font-semibold text-pencil">Nothing graded yet</p>
+              <p className="text-xs text-faint mt-1">Graded sheets land in this queue as they finish.</p>
             </div>
           )}
         </div>
       </aside>
 
-      {/* Manual Review Modal */}
-      {scanToReview && (
-        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4">
-           <motion.div 
-             initial={{ scale: 0.9, opacity: 0 }}
-             animate={{ scale: 1, opacity: 1 }}
-             className="bg-surface w-full max-w-4xl max-h-[90vh] rounded-3xl overflow-hidden flex flex-col shadow-2xl relative text-on-surface"
-           >
-              <div className="p-6 border-b border-outline-variant flex justify-between items-center bg-surface-container-low shrink-0">
-                 <div>
-                    <h2 className="text-xl font-bold text-on-surface">Sheet Review</h2>
-                    <p className="text-sm text-on-surface-variant">Review extracted scores and markings</p>
-                 </div>
-                 <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        if (deleteScans) await deleteScans([scanToReview.id]);
-                        setReviewScanId(null);
-                      }}
-                      className="px-4 py-2 bg-error/10 text-error hover:bg-error/20 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center gap-1 transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">delete</span>
-                      Delete
-                    </button>
-                    <button onClick={() => { setReviewScanId(null); setEditingScore(null); }} className="w-10 h-10 rounded-full hover:bg-surface-container flex items-center justify-center transition-colors">
-                       <span className="material-symbols-outlined">close</span>
-                    </button>
-                 </div>
+      {/* ── Sheet review modal ──────────────────────────────── */}
+      <AnimatePresence>
+        {scanToReview && (
+          <Modal
+            onClose={() => { setReviewScanId(null); setEditingScore(null); }}
+            title="Sheet review"
+            subtitle={`${selectedTest?.name || ''}${scanToReview.batchName ? ` · ${scanToReview.batchName}` : ''}`}
+            wide
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => { setReviewScanId(null); setEditingScore(null); }}>Close</Button>
+                <Button variant="solid" icon="save" onClick={handleSaveReview} className="px-6 h-10">Save review</Button>
+              </>
+            }
+          >
+            <div className="flex flex-col lg:flex-row min-h-0">
+              {/* The captured sheet */}
+              <div className="flex-1 bg-[#131A15] p-4 flex items-center justify-center min-h-[280px]">
+                {scanToReview.imageData && !scanToReview.imageData.startsWith('data:image/svg') ? (
+                  <img src={scanToReview.imageData} alt="Captured answer sheet" className="max-w-full max-h-[60vh] object-contain rounded-sm" />
+                ) : (
+                  <div className="flex flex-col items-center gap-3 text-white/40 py-16">
+                    <div className="w-14 h-14 rounded-md border border-white/15 flex items-center justify-center">
+                      <Icon name="description" size={28} />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-semibold text-white/60">Digitally filled PDF</p>
+                      <p className="text-[11px] text-white/35 mt-1 max-w-[220px]">No page photo — this sheet was graded straight from the form fields.</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
-                 {/* Visual Proof Section */}
-                 <div className="flex-1 bg-black p-4 flex items-center justify-center relative overflow-hidden group">
-                    {scanToReview.imageData ? (
-                      <img src={scanToReview.imageData} className="max-w-full max-h-full object-contain rounded-lg" />
+              {/* Controls */}
+              <div className="w-full lg:w-[340px] border-l border-hairline p-6 flex flex-col gap-6 shrink-0">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Student">
+                    <Input value={editName} onChange={e => setEditName(e.target.value)} />
+                  </Field>
+                  <Field label="ID">
+                    <Input value={editId} onChange={e => setEditId(e.target.value)} className="font-mono" />
+                  </Field>
+                </div>
+
+                <div className="doc p-4">
+                  <div className="flex items-end justify-between mb-3">
+                    <span className="ledger-label">Score</span>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        value={editingScore ?? String(scanToReview.rawScore)}
+                        onChange={(e) => setEditingScore(e.target.value)}
+                        className="!w-20 !h-9 text-center font-mono font-semibold"
+                        step="any"
+                      />
+                      <span className="font-mono text-sm text-pencil">/ {scanToReview.maxScore}</span>
+                    </div>
+                  </div>
+                  <div className="pt-3 border-t border-hairline flex items-center justify-between">
+                    <span className="ledger-label">Grade</span>
+                    <span className="font-display text-2xl font-bold text-mark-deep">
+                      {(() => {
+                        const s = editingScore !== null && editingScore !== '' ? (parseFloat(editingScore) || 0) : scanToReview.rawScore;
+                        const p = scanToReview.maxScore > 0 ? Math.round((s / scanToReview.maxScore) * 100) : 0;
+                        return `${letterFor(p, gradingScale)} · ${p}%`;
+                      })()}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-faint mt-3 leading-snug">
+                    Editing an answer below recalculates the score. Typing a score here overrides it.
+                  </p>
+                </div>
+
+                {/* Per-question markings — tap to correct */}
+                <div className="flex-1 min-h-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="ledger-label">Marked answers</span>
+                    <span className="text-[11px] text-faint">tap one to correct it</span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5 max-h-56 overflow-y-auto pr-1 table-scroll">
+                    {Array.from({ length: scanToReview.maxScore }).map((_, i) => {
+                      const qNum = i + 1;
+                      const ans = (editResponses[qNum] ?? scanToReview.responses?.[qNum]) || '';
+                      const correct = selectedTest?.answerKey?.[qNum] || '';
+                      const ok = ans !== '' && normalizeAnswer(ans) === normalizeAnswer(correct);
+                      const isOpen = editingQ === qNum;
+                      return (
+                        <div key={qNum} className="relative">
+                          <button
+                            onClick={() => setEditingQ(isOpen ? null : qNum)}
+                            className={`w-full flex flex-col items-center justify-center py-1.5 rounded-sm border text-[10px] font-mono font-semibold transition-colors ${
+                              !ans || ans === '?' ? 'bg-red-mist border-red/40 text-red'
+                              : ok ? 'bg-mark-mist/60 border-mark/30 text-mark-deep'
+                              : 'bg-red-mist/30 border-red/25 text-red'}`}
+                            title={`Q${qNum} — marked ${ans || 'nothing'}, key ${correct || '—'}`}
+                          >
+                            <span className="opacity-50 leading-none">{qNum}</span>
+                            <span className="truncate w-full text-center px-0.5 leading-tight">{ans || '—'}</span>
+                          </button>
+                          {isOpen && (
+                            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 z-20 bg-form-raised border border-hairline-strong rounded-md shadow-lg p-1.5 flex gap-1">
+                              {optionsFor(testFormats[qNum - 1] || 'A-D').map(opt => {
+                                const selected = ans.split(',').includes(opt);
+                                return (
+                                  <button
+                                    key={opt}
+                                    onClick={() => { markResponse(qNum, opt, isMultiple(testFormats[qNum - 1] || 'A-D')); }}
+                                    data-filled={selected}
+                                    className="bubble"
+                                    style={{ width: 24, height: 24, fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600 }}
+                                  >
+                                    {opt}
+                                  </button>
+                                );
+                              })}
+                              <button onClick={() => { setEditResponses(p => ({ ...p, [qNum]: '' })); setEditingQ(null); }} className="w-6 h-6 rounded-full text-faint hover:text-red hover:bg-red-mist flex items-center justify-center" title="Clear">
+                                <Icon name="close" size={12} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <Button
+                  variant="ghost"
+                  icon="delete"
+                  className="text-red hover:bg-red-mist self-start"
+                  onClick={async () => {
+                    await deleteScans([scanToReview.id]);
+                    setReviewScanId(null);
+                  }}
+                >
+                  Delete this sheet
+                </Button>
+              </div>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      {/* ── Answer key modal ────────────────────────────────── */}
+      {isEditingKey && selectedTest && (
+        <Modal
+          onClose={() => setIsEditingKey(false)}
+          title="Answer key"
+          subtitle={selectedTest.name}
+          wide
+          footer={
+            <>
+              <span className="text-sm font-medium text-red mr-auto">
+                {missingKeyCount > 0 ? `${missingKeyCount} question${missingKeyCount === 1 ? '' : 's'} still blank` : ''}
+              </span>
+              <Button variant="ghost" onClick={() => setIsEditingKey(false)}>Cancel</Button>
+              <Button variant="solid" onClick={handleSaveKey} disabled={missingKeyCount > 0} className="px-6 h-10">
+                Save key — regrades existing sheets
+              </Button>
+            </>
+          }
+        >
+          <div className="p-6 bg-surface-container-low">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {Array.from({ length: selectedTest.numQuestions }).map((_, i) => {
+                const qNum = i + 1;
+                const rowFormat = testFormats[qNum - 1] || selectedTest.format;
+                const options = optionsFor(rowFormat);
+                const multi = isMultiple(rowFormat);
+                const isMissing = !localKey[qNum] || localKey[qNum] === '';
+
+                return (
+                  <div key={qNum} className={`flex flex-col items-center p-3 rounded-md border transition-colors ${isMissing ? 'bg-red-mist/40 border-red/30' : 'bg-form-raised border-hairline'}`}>
+                    <span className={`text-[11px] font-semibold font-mono mb-2 ${isMissing ? 'text-red' : 'text-pencil'}`}>{qNum}</span>
+                    {rowFormat === 'SA' ? (
+                      <input
+                        type="text"
+                        value={localKey[qNum] || ''}
+                        onChange={(e) => setLocalKey(prev => ({ ...prev, [qNum]: e.target.value }))}
+                        placeholder="Answer"
+                        className="w-full text-center h-8 text-xs font-semibold border border-hairline-strong rounded-sm px-2 focus:border-mark focus:outline-none focus:ring-1 focus:ring-mark text-ink bg-form-raised"
+                      />
                     ) : (
-                      <div className="w-full h-full border-4 border-dashed border-primary/20 rounded-2xl flex flex-col items-center justify-center gap-4 text-primary/40">
-                         <span className="material-symbols-outlined text-[100px] opacity-10">photo_library</span>
-                         <p className="font-bold text-xs uppercase tracking-widest opacity-30">Image Unavailable</p>
+                      <div className="flex gap-1.5 flex-wrap justify-center">
+                        {options.map(opt => {
+                          const currentSelected = localKey[qNum] ? localKey[qNum].split(',') : [];
+                          const isSelected = currentSelected.includes(opt);
+                          return (
+                            <button
+                              key={opt}
+                              onClick={() => setLocalKey(prev => {
+                                if (multi) {
+                                  let next = [...currentSelected];
+                                  if (isSelected) next = next.filter(o => o !== opt);
+                                  else next.push(opt);
+                                  next.sort();
+                                  return { ...prev, [qNum]: next.join(',') };
+                                }
+                                return { ...prev, [qNum]: prev[qNum] === opt ? '' : opt };
+                              })}
+                              data-filled={isSelected}
+                              className="bubble font-mono font-semibold"
+                              style={{ width: 28, height: 28, fontSize: 12 }}
+                            >
+                              {opt}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
-                 </div>
-
-                 {/* Control Panel */}
-                 <div className="w-full lg:w-80 bg-surface-container-low border-l border-outline-variant p-8 flex flex-col gap-6 overflow-y-auto">
-                    <div>
-                       <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Student Info</label>
-                       <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
-                             <span className="material-symbols-outlined">person</span>
-                          </div>
-                          <div>
-                             <p className="font-bold text-on-surface">{scanToReview.studentName}</p>
-                             <p className="text-xs text-on-surface-variant">ID: {scanToReview.studentId}</p>
-                          </div>
-                       </div>
-                    </div>
-
-                    <div className="space-y-4">
-                       <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Grading Summary</label>
-                       <div className="bg-surface p-4 rounded-2xl border border-outline shadow-sm">
-                          <div className="flex items-end justify-between mb-4">
-                             <span className="text-sm font-medium text-on-surface-variant">Correct answers</span>
-                             <div className="flex items-center gap-2">
-                                <input 
-                                  type="number" 
-                                  value={editingScore ?? scanToReview.rawScore}
-                                  onChange={(e) => setEditingScore(parseInt(e.target.value) || 0)}
-                                  className="w-16 h-10 border border-outline-variant rounded-xl text-center font-bold text-primary focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none"
-                                />
-                                <span className="font-bold text-on-surface-variant">/ {scanToReview.maxScore}</span>
-                             </div>
-                          </div>
-                          <div className="pt-4 border-t border-outline flex flex-col items-center">
-                             <span className="text-[10px] font-bold text-on-surface-variant uppercase mb-2">Final Grade</span>
-                             <span className="text-4xl font-black text-primary">
-                                {(() => {
-                                  const s = editingScore !== null ? editingScore : scanToReview.rawScore;
-                                  const p = Math.round((s / scanToReview.maxScore) * 100);
-                                  if (p >= 90) return 'A';
-                                  if (p >= 80) return 'B';
-                                  if (p >= 70) return 'C';
-                                  if (p >= 60) return 'D';
-                                  return 'F';
-                                })()}
-                             </span>
-                          </div>
-                       </div>
-                    </div>
-
-                    <div>
-                       <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-3">Extracted Markings</label>
-                       <div className="grid grid-cols-5 gap-2">
-                          {Array.from({ length: scanToReview.maxScore }).map((_, i) => {
-                            const qNum = i + 1;
-                            const ans = scanToReview.responses?.[qNum];
-                            const correct = selectedTest?.answerKey?.[qNum] || '';
-                            const isCorrect = !!ans && ans.toLowerCase().trim() === correct.toLowerCase().trim();
-                            return (
-                              <div key={i} className={`flex flex-col items-center justify-center p-1 rounded-lg border text-[10px] font-bold overflow-hidden ${!ans || ans === '?' ? 'bg-error/10 border-error' : isCorrect ? 'bg-success/10 border-success' : 'bg-error/5 border-error/50'}`}>
-                                 <span className="opacity-40">{qNum}</span>
-                                 <span className="truncate w-full text-center px-0.5" title={ans || '?'}>{ans || '?'}</span>
-                              </div>
-                            );
-                          })}
-                       </div>
-                    </div>
-
-                    <div className="mt-auto flex flex-col gap-3 pt-4">
-                       <button 
-                         onClick={() => {
-                           handleUpdateScore(scanToReview.id, editingScore ?? scanToReview.rawScore);
-                           setReviewScanId(null);
-                           setEditingScore(null);
-                         }}
-                         className="w-full py-4 bg-primary text-white rounded-2xl font-bold hover:bg-primary/90 transition-all shadow-lg active:scale-95"
-                       >
-                         SAVE CHANGES
-                       </button>
-                    </div>
-                 </div>
-              </div>
-           </motion.div>
-        </div>
-      )}
-
-      {/* Answer Key Editor Modal */}
-      {isEditingKey && selectedTest && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 md:p-8">
-          <div className="bg-surface w-full max-w-2xl max-h-[90vh] rounded-2xl flex flex-col shadow-2xl relative overflow-hidden text-on-surface">
-            <div className="p-6 border-b border-outline-variant flex justify-between items-center bg-surface-container-low shrink-0">
-              <div>
-                <h2 className="text-xl font-bold text-primary">Answer Key</h2>
-                <p className="text-sm text-on-surface-variant mt-1">{selectedTest.name}</p>
-              </div>
-              <button 
-                onClick={() => setIsEditingKey(false)}
-                className="w-10 h-10 rounded-full hover:bg-surface-container flex justify-center items-center transition-colors text-on-surface"
-               >
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-surface-container-lowest">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                 {Array.from({ length: selectedTest.numQuestions }).map((_, i) => {
-                   const qNum = i + 1;
-                   const qFormats = selectedTest.sections ? selectedTest.sections.flatMap(sec => Array.from({ length: sec.count }).fill(sec.format) as string[]) : [];
-                   const rowFormat = qFormats[qNum - 1] || selectedTest.format;
-                   const options = getOptions(rowFormat);
-                   const isMultiple = rowFormat.endsWith('-M');
-                   const isMissing = !localKey[qNum] || localKey[qNum] === '';
-                   
-                   return (
-                     <div key={qNum} className={`flex flex-col items-center p-3 rounded-lg border shadow-sm transition-colors ${isMissing ? 'bg-error-container/10 border-error-container/50' : 'bg-surface border-outline-variant'}`}>
-                       <span className={`text-[11px] font-bold font-mono mb-2 ${isMissing ? 'text-error' : 'text-on-surface-variant'}`}>Q{qNum}</span>
-                       {rowFormat === 'SA' ? (
-                          <input 
-                            type="text" 
-                            value={localKey[qNum] || ''}
-                            onChange={(e) => setLocalKey(prev => ({ ...prev, [qNum]: e.target.value }))}
-                            placeholder="Answer"
-                            className="w-[100px] text-center h-7 text-[11px] font-bold border border-outline-variant rounded-sm px-1 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary text-on-surface bg-surface"
-                          />
-                       ) : (
-                       <div className="flex gap-1.5 flex-wrap justify-center">
-                         {options.map(opt => {
-                           const currentSelected = localKey[qNum] ? localKey[qNum].split(',') : [];
-                           const isSelected = currentSelected.includes(opt);
-                           
-                           return (
-                             <button
-                               key={opt}
-                               onClick={() => setLocalKey(prev => {
-                                 if (isMultiple) {
-                                   let newSelected = [...currentSelected];
-                                   if (isSelected) {
-                                     newSelected = newSelected.filter(o => o !== opt);
-                                   } else {
-                                     newSelected.push(opt);
-                                   }
-                                   newSelected.sort();
-                                   return { ...prev, [qNum]: newSelected.join(',') };
-                                 } else {
-                                   return { ...prev, [qNum]: prev[qNum] === opt ? '' : opt };
-                                 }
-                               })}
-                               className={`w-7 h-7 rounded-sm font-bold text-[11px] flex items-center justify-center transition-colors ${
-                                 isSelected 
-                                   ? 'bg-primary text-white border-primary border' 
-                                   : 'bg-surface text-on-surface border border-outline-variant hover:border-primary hover:text-primary hover:bg-primary/5'
-                               }`}
-                             >
-                               {opt}
-                             </button>
-                           );
-                         })}
-                       </div>
-                       )}
-                     </div>
-                   );
-                 })}
-              </div>
-            </div>
-            
-            <div className="p-4 border-t border-outline-variant bg-surface-container flex justify-between items-center shrink-0">
-              <div className="text-sm font-medium text-error">
-                {Array.from({ length: selectedTest.numQuestions }).filter((_, i) => !localKey[i + 1] || localKey[i + 1] === '').length > 0 && 
-                  `${Array.from({ length: selectedTest.numQuestions }).filter((_, i) => !localKey[i + 1] || localKey[i + 1] === '').length} questions missing answers`
-                }
-              </div>
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => setIsEditingKey(false)}
-                  className="px-6 py-2 rounded-full font-semibold text-primary hover:bg-primary/10 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleSaveKey}
-                  disabled={Array.from({ length: selectedTest.numQuestions }).filter((_, i) => !localKey[i + 1] || localKey[i + 1] === '').length > 0}
-                  className="px-8 py-2 rounded-full font-semibold bg-primary text-white hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Save Key
-                </button>
-              </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* Image Review & Cropping Modal */}
+      {/* ── Crop / review before grading ────────────────────── */}
       <AnimatePresence>
         {isReviewingImage && capturedImage && (
-          <div className="fixed inset-0 bg-black/95 z-[70] flex flex-col items-center justify-center p-4 md:p-8">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-surface w-full max-w-4xl max-h-full rounded-3xl overflow-hidden flex flex-col shadow-2xl relative text-on-surface"
+          <div className="fixed inset-0 bg-black/90 z-[70] flex flex-col items-center justify-center p-4 md:p-8">
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 12 }}
+              className="bg-form w-full max-w-4xl max-h-full rounded-md overflow-hidden flex flex-col shadow-2xl relative text-ink border border-hairline"
             >
-              <div className="p-6 border-b border-outline-variant flex justify-between items-center bg-surface-container-low shrink-0">
+              <div className="px-6 py-5 border-b border-hairline flex justify-between items-center shrink-0">
                 <div>
-                   <h2 className="text-xl font-bold text-on-surface">Review & Alignment</h2>
-                   <p className="text-xs text-on-surface-variant font-bold uppercase tracking-widest mt-1">Adjust crop to fit the bubble sheet</p>
+                  <h2 className="text-headline-sm">Frame the sheet</h2>
+                  <p className="text-sm text-pencil mt-0.5">Tighten the crop to the answer area, then grade.</p>
                 </div>
                 <div className="flex gap-2">
-                   <button 
-                     onClick={handleRetake}
-                     className="px-4 py-2 bg-surface-container text-on-surface font-bold text-sm rounded-xl hover:bg-surface-variant transition-all flex items-center gap-2"
-                   >
-                     <span className="material-symbols-outlined text-[18px]">replay</span>
-                     RETAKE
-                   </button>
-                   <button 
-                     onClick={() => setIsReviewingImage(false)}
-                     className="w-10 h-10 rounded-full hover:bg-surface-container flex items-center justify-center transition-colors"
-                   >
-                     <span className="material-symbols-outlined">close</span>
-                   </button>
+                  <Button variant="outline" icon="replay" onClick={handleRetake} className="h-9 text-xs">Retake</Button>
+                  <Button variant="ghost" onClick={() => setIsReviewingImage(false)}>Close</Button>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-auto bg-black/20 flex items-center justify-center p-4">
+              <div className="flex-1 overflow-auto bg-[#131A15] flex items-center justify-center p-4">
                 <ReactCrop
                   crop={crop}
                   onChange={(c) => setCrop(c)}
@@ -917,35 +965,29 @@ export function ScanSheets() {
                   aspect={1 / 1.4}
                   className="max-h-full"
                 >
-                  <img 
+                  <img
                     ref={imgRef}
-                    src={capturedImage} 
-                    onLoad={onImageLoad} 
-                    className="max-w-full max-h-[60vh] object-contain"
+                    src={capturedImage}
+                    alt="Sheet to grade"
+                    onLoad={onImageLoad}
+                    className="max-w-full max-h-[55vh] object-contain"
                   />
                 </ReactCrop>
               </div>
 
-              <div className="p-6 bg-surface-container-low border-t border-outline-variant flex justify-between items-center">
-                 <div className="flex items-center gap-2 text-on-surface-variant">
-                    <span className="material-symbols-outlined">info</span>
-                    <span className="text-xs font-medium">Ensure all black squares and bubbles are within the selection.</span>
-                 </div>
-                 <div className="flex gap-3">
-                    <button 
-                      onClick={handleConfirmCrop}
-                      className="px-8 py-3 bg-primary text-white font-bold rounded-2xl hover:bg-primary/90 hover:shadow-lg transition-all flex items-center gap-2 active:scale-95"
-                    >
-                      <span className="material-symbols-outlined">check_circle</span>
-                      START GRADING
-                    </button>
-                 </div>
+              <div className="px-6 py-4 bg-surface-container-low border-t border-hairline flex justify-between items-center">
+                <div className="flex items-center gap-2 text-pencil">
+                  <Icon name="info" size={16} />
+                  <span className="text-xs font-medium">Keep every row of bubbles inside the frame.</span>
+                </div>
+                <Button variant="solid" icon="check" onClick={handleConfirmCrop} className="px-6 h-10">
+                  Grade this sheet
+                </Button>
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
-
     </div>
   );
 }
