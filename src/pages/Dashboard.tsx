@@ -44,12 +44,12 @@ export function Dashboard() {
           <div className="flex items-center gap-6 text-sm">
             <div className="flex flex-col items-end">
               <span className="font-mono text-2xl font-semibold text-ink leading-none">{tests.length}</span>
-              <span className="ledger-label mt-1">assessments</span>
+              <span className="ledger-label mt-1">assessment{tests.length === 1 ? '' : 's'}</span>
             </div>
             <div className="w-px h-8 bg-hairline" />
             <div className="flex flex-col items-end">
               <span className="font-mono text-2xl font-semibold text-ink leading-none">{scans.length}</span>
-              <span className="ledger-label mt-1">sheets graded</span>
+              <span className="ledger-label mt-1">sheet{scans.length === 1 ? '' : 's'} graded</span>
             </div>
             {pendingReview.length > 0 && (
               <>
@@ -178,7 +178,7 @@ export function Dashboard() {
           <div className="flex flex-col gap-6">
             <div className="doc p-6">
               <h3 className="font-display text-lg font-semibold mb-1">Class Average</h3>
-              <p className="text-sm text-pencil mb-6">Across your last {recentTestsWithScans.length} assessments</p>
+              <p className="text-sm text-pencil mb-6">Across your last {recentTestsWithScans.length} assessment{recentTestsWithScans.length === 1 ? '' : 's'}</p>
 
               <div className="relative h-[180px] border-b border-l border-hairline-strong">
                 <div className="absolute -left-7 top-0 h-full flex flex-col justify-between text-[10px] text-faint font-mono py-0.5">

@@ -154,7 +154,7 @@ export function TestHistory() {
               <>
                 <Button variant="ghost" onClick={() => setTestToDelete(null)}>Keep it</Button>
                 <Button variant="danger" icon="delete" onClick={() => void handleDelete(testToDelete)} className="px-6 h-10">
-                  Delete{deletingCount > 0 ? ` + ${deletingCount} sheets` : ''}
+                  Delete{deletingCount > 0 ? ` + ${deletingCount} sheet${deletingCount === 1 ? '' : 's'}` : ''}
                 </Button>
               </>
             }

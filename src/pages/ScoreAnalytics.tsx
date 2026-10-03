@@ -52,7 +52,7 @@ export function ScoreAnalytics() {
       <div className="flex-1 flex flex-col items-center justify-center p-10 max-w-2xl mx-auto text-center">
         <EmptyState
           icon={isNoTests ? 'library_books' : 'search_off'}
-          title={isNoTests ? 'No assessments yet' : 'Assessment not found'}
+          title={isNoTests ? 'No Assessments Yet' : 'Assessment Not Found'}
           body={isNoTests
             ? 'Create your first assessment to start tracking scores.'
             : "That assessment isn't in the register — it may have been deleted."}
@@ -177,7 +177,7 @@ export function ScoreAnalytics() {
         <div className="col-span-1 lg:col-span-7 doc p-6">
           <div className="flex justify-between items-baseline mb-8">
             <h3 className="font-display text-lg font-semibold">Score Distribution</h3>
-            <span className="ledger-label">{numScanned} sheets</span>
+            <span className="ledger-label">{numScanned} sheet{numScanned === 1 ? '' : 's'}</span>
           </div>
           <div className="h-[220px] flex items-end relative border-b border-l border-hairline-strong">
             <div className="absolute -left-6 top-0 bottom-6 flex flex-col justify-between text-[10px] text-faint font-mono">
