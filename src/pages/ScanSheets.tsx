@@ -81,7 +81,8 @@ export function ScanSheets() {
   const [editResponses, setEditResponses] = useState<Record<number, string>>({});
   const [editingQ, setEditingQ] = useState<number | null>(null);
 
-  // Seed the review editor whenever a different scan is opened
+  // Seed the review editor whenever a different scan is opened — depend
+  // on the scan's id so a late-arriving record still seeds correctly.
   useEffect(() => {
     if (scanToReview) {
       setEditName(scanToReview.studentName || '');
@@ -90,7 +91,7 @@ export function ScanSheets() {
       setEditingScore(null);
       setEditingQ(null);
     }
-  }, [reviewScanId]);
+  }, [scanToReview?.id]);
 
   // ── Image capture / crop state ─────────────────────────────
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -460,13 +461,16 @@ export function ScanSheets() {
 
   const markResponse = (qNum: number, opt: string, multi: boolean) => {
     setEditResponses(prev => {
+      // Fall back to the stored response so an unseeded cell never
+      // discards existing marks.
+      const current = prev[qNum] !== undefined ? prev[qNum] : (scanToReview?.responses?.[qNum] ?? '');
       if (multi) {
-        const cur = prev[qNum] ? prev[qNum].split(',').filter(Boolean) : [];
+        const cur = current ? current.split(',').filter(Boolean) : [];
         const next = cur.includes(opt) ? cur.filter(o => o !== opt) : [...cur, opt];
         next.sort();
         return { ...prev, [qNum]: next.join(',') };
       }
-      return { ...prev, [qNum]: prev[qNum] === opt ? '' : opt };
+      return { ...prev, [qNum]: current === opt ? '' : opt };
     });
   };
 

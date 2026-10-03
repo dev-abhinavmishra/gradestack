@@ -150,9 +150,15 @@ export function Settings() {
         <div className="flex items-center justify-between pt-4 mt-2 border-t border-hairline">
           <Toggle
             checked={partialCredit}
-            onChange={setPartialCredit}
+            onChange={async v => {
+              setPartialCredit(v);
+              setRegrading(true);
+              await regradeAll();
+              setRegrading(false);
+              flash(v ? 'Partial credit on — every stored sheet re-graded.' : 'Partial credit off — every stored sheet re-graded.');
+            }}
             label="Partial credit on multi-mark questions"
-            description="A 'mark all that apply' answer scores the fraction of correct options chosen."
+            description="A 'mark all that apply' answer scores the fraction of correct options chosen. Toggling re-grades stored sheets."
           />
         </div>
         <div className="flex justify-end gap-3 mt-4">

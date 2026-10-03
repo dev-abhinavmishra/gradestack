@@ -7,6 +7,46 @@ import { Reorder, motion } from 'motion/react';
 import { Icon, Button, Input, Field, Toggle, BubbleMark } from '../components/ui';
 import { optionsFor, isMultiple, FORMAT_LABELS, formatsForTest } from '../lib/grading';
 
+const layoutOf = (secs: TestSection[]) => {
+  let start = 1;
+  return secs.map(s => {
+    const count = Math.max(0, parseInt(s.count as any) || 0);
+    const l = { id: s.id, format: s.format, start, count };
+    start += count;
+    return l;
+  });
+};
+
+/* Keep the marked key aligned with the sheet as sections change: an
+   answer travels with its question (same section id, same offset) while
+   the question still exists and still accepts that option — otherwise
+   it is dropped rather than left to grade the wrong question. */
+const remapAnswerKey = (
+  prevSecs: TestSection[],
+  nextSecs: TestSection[],
+  key: Record<number, string>,
+): Record<number, string> => {
+  if (Object.keys(key).length === 0) return key;
+  const prevLayout = layoutOf(prevSecs);
+  const nextById = new Map(layoutOf(nextSecs).map(l => [l.id, l]));
+  const next: Record<number, string> = {};
+  for (const [qk, ans] of Object.entries(key)) {
+    const q = parseInt(qk);
+    if (!ans || isNaN(q)) continue;
+    const prevSec = prevLayout.find(l => q >= l.start && q < l.start + l.count);
+    if (!prevSec) continue;
+    const nextSec = nextById.get(prevSec.id);
+    if (!nextSec || nextSec.format !== prevSec.format) continue;
+    const offset = q - prevSec.start;
+    if (offset >= nextSec.count) continue;
+    const opts = optionsFor(nextSec.format);
+    if (ans.split(',').filter(Boolean).every(o => opts.includes(o))) {
+      next[nextSec.start + offset] = ans;
+    }
+  }
+  return next;
+};
+
 export function SheetBuilder() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -33,6 +73,18 @@ export function SheetBuilder() {
   // Answer key — marked right on the sheet preview
   const [keyMode, setKeyMode] = useState(false);
   const [answerKey, setAnswerKey] = useState<Record<number, string>>({});
+
+  /* Section edits shift question numbers — re-map the marked key so each
+     answer follows its question; stale entries drop instead of grading
+     the wrong row. */
+  const prevSectionsRef = useRef(sections);
+  useEffect(() => {
+    const prev = prevSectionsRef.current;
+    prevSectionsRef.current = sections;
+    if (prev !== sections) {
+      setAnswerKey(k => remapAnswerKey(prev, sections, k));
+    }
+  }, [sections]);
 
   const addTest = useStore(state => state.addTest);
   const updateTest = useStore(state => state.updateTest);
@@ -169,7 +221,12 @@ export function SheetBuilder() {
         setCourseName(test.courseName || '');
         setInstructorName(test.instructorName || '');
         setIncludeStudentId(test.includeStudentId !== false);
-        if (test.sections && test.sections.length > 0) setSections(test.sections);
+        if (test.sections && test.sections.length > 0) {
+          setSections(test.sections);
+          // Loading replaces the sheet wholesale — the loaded key is
+          // already aligned, so this isn't a remap-worthy edit.
+          prevSectionsRef.current = test.sections;
+        }
         if (test.answerKey) setAnswerKey(test.answerKey);
         setHasLoaded(true);
       }

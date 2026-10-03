@@ -4,6 +4,11 @@ import { db, auth } from './lib/firebase';
 import { collection, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { gradeResponses, letterFor, GradingScale, DEFAULT_SCALE } from './lib/grading';
 
+/* Firestore rejects any document containing undefined field values —
+   strip them before every write. */
+const stripUndefined = <T extends object>(o: T): T =>
+  Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+
 export type QuestionFormat = 'A-D' | 'A-E' | 'TF' | 'A-D-M' | 'A-E-M' | 'SA';
 
 export interface TestSection {
@@ -47,6 +52,9 @@ export interface Scan {
 interface AppState {
   user: any | null;
   setUser: (user: any | null) => void;
+  /* uid that owns the persisted data, or null while working signed-out.
+     Guards against uploading one account's records into another's. */
+  dataOwnerUid: string | null;
   tests: Test[];
   scans: Scan[];
   theme: 'light' | 'dark' | 'system';
@@ -79,6 +87,7 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       user: null,
       setUser: (user) => set({ user }),
+      dataOwnerUid: null,
       tests: [],
       scans: [],
       theme: 'system',
@@ -93,9 +102,23 @@ export const useStore = create<AppState>()(
       setScans: (scans) => set({ scans }),
 
       /* Merge server data with anything created locally while signed out,
-         then push the local-only items up so nothing is lost on sign-in. */
+         then push the local-only items up so nothing is lost on sign-in.
+         If the persisted data belongs to a different account, adopt the
+         signed-in account's cloud state instead — never upload another
+         user's records under a new uid. */
       mergeRemote: (remoteTests, remoteScans) => {
         const state = get();
+        const user = auth?.currentUser;
+
+        if (user && state.dataOwnerUid && state.dataOwnerUid !== user.uid) {
+          set({
+            tests: remoteTests.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+            scans: remoteScans.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+            dataOwnerUid: user.uid,
+          });
+          return;
+        }
+
         const testIds = new Set(remoteTests.map(t => t.id));
         const scanIds = new Set(remoteScans.map(s => s.id));
         const localOnlyTests = state.tests.filter(t => !testIds.has(t.id));
@@ -103,15 +126,14 @@ export const useStore = create<AppState>()(
 
         const tests = [...remoteTests, ...localOnlyTests].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         const scans = [...remoteScans, ...localOnlyScans].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        set({ tests, scans });
+        set({ tests, scans, ...(user ? { dataOwnerUid: user.uid } : {}) });
 
-        const user = auth?.currentUser;
         if (user) {
           localOnlyTests.forEach(t => {
-            setDoc(doc(db, 'tests', t.id), { ...t, userId: user.uid }).catch(() => {});
+            setDoc(doc(db, 'tests', t.id), stripUndefined({ ...t, userId: user.uid })).catch(() => {});
           });
           localOnlyScans.forEach(s => {
-            setDoc(doc(db, 'scans', s.id), { ...s, userId: user.uid }).catch(() => {});
+            setDoc(doc(db, 'scans', s.id), stripUndefined({ ...s, userId: user.uid })).catch(() => {});
           });
         }
       },
@@ -131,7 +153,7 @@ export const useStore = create<AppState>()(
 
         if (user && db) {
           try {
-            await setDoc(doc(db, 'tests', id), newTest);
+            await setDoc(doc(db, 'tests', id), stripUndefined(newTest));
           } catch(e) {
             console.error(e);
           }
@@ -176,7 +198,7 @@ export const useStore = create<AppState>()(
         set((state) => ({ scans: [newScan, ...state.scans] }));
 
         if (user && db) {
-          try { await setDoc(doc(db, 'scans', id), newScan); } catch(e) {}
+          try { await setDoc(doc(db, 'scans', id), stripUndefined(newScan)); } catch(e) {}
         }
       },
 
@@ -201,7 +223,7 @@ export const useStore = create<AppState>()(
           scans: state.scans.map(s => s.id === id ? { ...s, ...updates } : s)
         }));
         if (auth?.currentUser && db) {
-          try { await updateDoc(doc(db, 'scans', id), updates); } catch(e) {}
+          try { await updateDoc(doc(db, 'scans', id), stripUndefined(updates)); } catch(e) {}
         }
       },
 
@@ -247,7 +269,7 @@ export const useStore = create<AppState>()(
         });
 
         if (auth?.currentUser && db) {
-          try { await updateDoc(doc(db, 'tests', id), updates); } catch(e) {}
+          try { await updateDoc(doc(db, 'tests', id), stripUndefined(updates)); } catch(e) {}
         }
       },
 
@@ -293,14 +315,29 @@ export const useStore = create<AppState>()(
           const state = get();
           const testIds = new Set(state.tests.map(t => t.id));
           const scanIds = new Set(state.scans.map(s => s.id));
-          const newTests = (data.tests as Test[]).filter(t => t && t.id && !testIds.has(t.id));
-          const newScans = (data.scans as Scan[]).filter(s => s && s.id && !scanIds.has(s.id));
+          const user = auth?.currentUser;
+          const newTests = (data.tests as Test[])
+            .filter(t => t && t.id && !testIds.has(t.id))
+            .map(t => ({ ...t, userId: user?.uid ?? t.userId }));
+          const newScans = (data.scans as Scan[])
+            .filter(s => s && s.id && !scanIds.has(s.id))
+            .map(s => ({ ...s, userId: user?.uid ?? s.userId }));
+          const theme = data.settings?.theme;
           set({
             tests: [...newTests, ...state.tests],
             scans: [...newScans, ...state.scans],
             ...(data.settings?.gradingScale ? { gradingScale: data.settings.gradingScale } : {}),
             ...(typeof data.settings?.partialCredit === 'boolean' ? { partialCredit: data.settings.partialCredit } : {}),
+            ...(theme === 'system' || theme === 'light' || theme === 'dark' ? { theme } : {}),
           });
+          if (user && db) {
+            newTests.forEach(t => {
+              setDoc(doc(db, 'tests', t.id), stripUndefined(t)).catch(() => {});
+            });
+            newScans.forEach(s => {
+              setDoc(doc(db, 'scans', s.id), stripUndefined(s)).catch(() => {});
+            });
+          }
           return newTests.length + newScans.length;
         } catch {
           return 0;
@@ -318,6 +355,7 @@ export const useStore = create<AppState>()(
           gradingScale: { ...DEFAULT_SCALE },
           partialCredit: false,
           geminiKey: '',
+          dataOwnerUid: user?.uid ?? null,
         });
 
         if (user && db) {
@@ -338,6 +376,7 @@ export const useStore = create<AppState>()(
         gradingScale: state.gradingScale,
         partialCredit: state.partialCredit,
         geminiKey: state.geminiKey,
+        dataOwnerUid: state.dataOwnerUid,
       }),
     }
   )
