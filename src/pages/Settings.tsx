@@ -155,7 +155,16 @@ export function Settings() {
             description="A 'mark all that apply' answer scores the fraction of correct options chosen."
           />
         </div>
-        <div className="flex justify-end mt-4">
+        <div className="flex justify-end gap-3 mt-4">
+          <Button
+            variant="outline"
+            icon="restart_alt"
+            disabled={regrading || scans.length === 0}
+            className="h-10"
+            onClick={async () => { setRegrading(true); await regradeAll(); setRegrading(false); flash('Every stored sheet re-graded with the current rules.'); }}
+          >
+            Re-grade all sheets
+          </Button>
           <Button variant="solid" onClick={() => void saveScale()} disabled={!scaleDirty || regrading} className="h-10 px-6">
             {regrading ? 'Re-grading…' : 'Save scale + re-grade all'}
           </Button>

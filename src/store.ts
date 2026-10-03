@@ -311,7 +311,14 @@ export const useStore = create<AppState>()(
         const state = get();
         const user = auth?.currentUser;
 
-        set({ tests: [], scans: [] });
+        set({
+          tests: [],
+          scans: [],
+          theme: 'system',
+          gradingScale: { ...DEFAULT_SCALE },
+          partialCredit: false,
+          geminiKey: '',
+        });
 
         if (user && db) {
           const deletePromises = [

@@ -373,15 +373,20 @@ export function ScanSheets() {
           const qNum = parseInt(parts[1]);
           const option = parts[2];
           if (!isNaN(qNum)) {
-            if (field.constructor.name === 'PDFRadioGroup' || (field as any).getSelected) {
+            // Duck-type — bundled pdf-lib classes may carry a numeric suffix.
+            const f = field as any;
+            const isRadio = typeof f.getSelected === 'function';
+            const isBox = typeof f.isChecked === 'function';
+            const isText = !isRadio && !isBox && typeof f.getText === 'function';
+            if (isRadio) {
               try {
-                const selected = (field as any).getSelected();
+                const selected = f.getSelected();
                 if (typeof selected === 'string' && selected && selected !== 'Off') {
                   studentResponses[qNum] = selected;
                 }
               } catch (e) {}
-            } else if (field.constructor.name === 'PDFCheckBox' || (field as any).isChecked) {
-              if ((field as any).isChecked && (field as any).isChecked()) {
+            } else if (isBox) {
+              if (f.isChecked()) {
                 if (studentResponses[qNum]) {
                   const existing = studentResponses[qNum].split(',');
                   if (!existing.includes(option)) {
@@ -391,9 +396,9 @@ export function ScanSheets() {
                   studentResponses[qNum] = option;
                 }
               }
-            } else if (field.constructor.name === 'PDFTextField' || (field as any).getText) {
+            } else if (isText) {
               try {
-                const text = (field as any).getText();
+                const text = f.getText();
                 if (text) studentResponses[qNum] = text;
               } catch (e) {}
             }
@@ -797,7 +802,7 @@ export function ScanSheets() {
                     <span className="ledger-label">Marked answers</span>
                     <span className="text-[11px] text-faint">tap one to correct it</span>
                   </div>
-                  <div className="grid grid-cols-5 gap-1.5 max-h-56 overflow-y-auto pr-1 table-scroll">
+                  <div className="grid grid-cols-5 gap-1.5 max-h-48 overflow-y-auto pr-1 table-scroll">
                     {Array.from({ length: scanToReview.maxScore }).map((_, i) => {
                       const qNum = i + 1;
                       const ans = (editResponses[qNum] ?? scanToReview.responses?.[qNum]) || '';
@@ -805,43 +810,73 @@ export function ScanSheets() {
                       const ok = ans !== '' && normalizeAnswer(ans) === normalizeAnswer(correct);
                       const isOpen = editingQ === qNum;
                       return (
-                        <div key={qNum} className="relative">
-                          <button
-                            onClick={() => setEditingQ(isOpen ? null : qNum)}
-                            className={`w-full flex flex-col items-center justify-center py-1.5 rounded-sm border text-[10px] font-mono font-semibold transition-colors ${
-                              !ans || ans === '?' ? 'bg-red-mist border-red/40 text-red'
-                              : ok ? 'bg-mark-mist/60 border-mark/30 text-mark-deep'
-                              : 'bg-red-mist/30 border-red/25 text-red'}`}
-                            title={`Q${qNum} — marked ${ans || 'nothing'}, key ${correct || '—'}`}
-                          >
-                            <span className="opacity-50 leading-none">{qNum}</span>
-                            <span className="truncate w-full text-center px-0.5 leading-tight">{ans || '—'}</span>
-                          </button>
-                          {isOpen && (
-                            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 z-20 bg-form-raised border border-hairline-strong rounded-md shadow-lg p-1.5 flex gap-1">
-                              {optionsFor(testFormats[qNum - 1] || 'A-D').map(opt => {
-                                const selected = ans.split(',').includes(opt);
-                                return (
-                                  <button
-                                    key={opt}
-                                    onClick={() => { markResponse(qNum, opt, isMultiple(testFormats[qNum - 1] || 'A-D')); }}
-                                    data-filled={selected}
-                                    className="bubble"
-                                    style={{ width: 24, height: 24, fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600 }}
-                                  >
-                                    {opt}
-                                  </button>
-                                );
-                              })}
-                              <button onClick={() => { setEditResponses(p => ({ ...p, [qNum]: '' })); setEditingQ(null); }} className="w-6 h-6 rounded-full text-faint hover:text-red hover:bg-red-mist flex items-center justify-center" title="Clear">
-                                <Icon name="close" size={12} />
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                        <button
+                          key={qNum}
+                          onClick={() => setEditingQ(isOpen ? null : qNum)}
+                          className={`w-full flex flex-col items-center justify-center py-1.5 rounded-sm border text-[10px] font-mono font-semibold transition-colors ${
+                            isOpen ? 'ring-2 ring-mark ring-offset-1 ring-offset-form-raised' : ''
+                          } ${
+                            !ans || ans === '?' ? 'bg-red-mist border-red/40 text-red'
+                            : ok ? 'bg-mark-mist/60 border-mark/30 text-mark-deep'
+                            : 'bg-red-mist/30 border-red/25 text-red'}`}
+                          title={`Q${qNum} — marked ${ans || 'nothing'}, key ${correct || '—'}`}
+                        >
+                          <span className="opacity-50 leading-none">{qNum}</span>
+                          <span className="truncate w-full text-center px-0.5 leading-tight">{ans || '—'}</span>
+                        </button>
                       );
                     })}
                   </div>
+
+                  {/* Correction strip — inline so nothing can clip it */}
+                  {editingQ !== null && (
+                    <div className="mt-2 doc p-3 flex items-center gap-3">
+                      <span className="font-mono text-xs font-semibold text-pencil shrink-0">Q{editingQ}</span>
+                      {(testFormats[editingQ - 1] || 'A-D') === 'SA' ? (
+                        <Input
+                          value={editResponses[editingQ] ?? ''}
+                          onChange={e => setEditResponses(p => ({ ...p, [editingQ]: e.target.value }))}
+                          placeholder="Correct answer…"
+                          className="!h-8 flex-1 font-mono text-xs"
+                          autoFocus
+                        />
+                      ) : (
+                        <div className="flex gap-1.5">
+                          {optionsFor(testFormats[editingQ - 1] || 'A-D').map(opt => {
+                            const ans = editResponses[editingQ] ?? scanToReview.responses?.[editingQ] ?? '';
+                            const selected = ans.split(',').includes(opt);
+                            return (
+                              <button
+                                key={opt}
+                                onClick={() => markResponse(editingQ, opt, isMultiple(testFormats[editingQ - 1] || 'A-D'))}
+                                data-filled={selected}
+                                className="bubble font-mono font-semibold"
+                                style={{ width: 28, height: 28, fontSize: 12 }}
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1 ml-auto shrink-0">
+                        <button
+                          onClick={() => setEditResponses(p => ({ ...p, [editingQ]: '' }))}
+                          className="w-7 h-7 rounded-full text-faint hover:text-red hover:bg-red-mist flex items-center justify-center transition-colors"
+                          title="Clear answer"
+                        >
+                          <Icon name="backspace" size={15} />
+                        </button>
+                        <button
+                          onClick={() => setEditingQ(null)}
+                          className="w-7 h-7 rounded-full text-mark-deep hover:bg-mark-mist flex items-center justify-center transition-colors"
+                          title="Done"
+                        >
+                          <Icon name="check" size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <Button

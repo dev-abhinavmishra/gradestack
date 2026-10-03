@@ -79,6 +79,11 @@ export function SheetBuilder() {
       // Group fields by question number
       const questionMap = new Map<number, { format: QuestionFormat; options: Set<string> }>();
 
+      // Duck-type the fields — bundled pdf-lib classes may carry a
+      // numeric suffix (PDFTextField2), so constructor.name is unreliable.
+      const isTextField = (f: any) => typeof f.setText === 'function' && typeof f.getText === 'function';
+      const isRadioGroup = (f: any) => typeof f.getOptions === 'function' && typeof f.select === 'function';
+
       fields.forEach(field => {
         const name = field.getName();
         const parts = name.split('.'); // q.1 or q.1.A
@@ -87,13 +92,13 @@ export function SheetBuilder() {
           if (!isNaN(qNum)) {
             if (!questionMap.has(qNum)) {
               let initialFormat: QuestionFormat = 'A-D';
-              if (field.constructor.name === 'PDFTextField') initialFormat = 'SA';
+              if (isTextField(field)) initialFormat = 'SA';
               questionMap.set(qNum, { format: initialFormat, options: new Set() });
             }
             const qData = questionMap.get(qNum)!;
             if (parts[2]) {
               qData.options.add(parts[2]);
-            } else if (field.constructor.name === 'PDFRadioGroup') {
+            } else if (isRadioGroup(field)) {
               try {
                 const options = (field as any).getOptions();
                 if (options) options.forEach((opt: string) => qData.options.add(opt));
