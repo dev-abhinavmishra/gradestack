@@ -16,18 +16,15 @@ function AppLayout() {
   const theme = useStore(state => state.theme);
 
   useEffect(() => {
-    let isDark = false;
-    if (theme === 'dark') {
-      isDark = true;
-    } else if (theme === 'system') {
-      isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    }
-    
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => {
+      const isDark = theme === 'dark' || (theme === 'system' && media.matches);
+      document.documentElement.classList.toggle('dark', isDark);
+    };
+    apply();
+    // 'system' must track the OS while the app is open, not once.
+    media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
   }, [theme]);
 
   const getPageTitle = () => {
@@ -43,11 +40,11 @@ function AppLayout() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden relative">
+    <div className="flex h-screen w-full bg-paper overflow-hidden relative">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col w-full h-full overflow-hidden">
         {location.pathname !== '/scan' && <MobileHeader title={getPageTitle()} onMenuClick={() => setSidebarOpen(true)} />}
-        <main className={`flex-1 overflow-y-auto w-full relative ${location.pathname === '/scan' ? 'bg-tertiary-container' : ''}`}>
+        <main className={`flex-1 overflow-y-auto w-full relative ${location.pathname === '/scan' ? 'bg-ink' : ''}`}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/builder" element={<SheetBuilder />} />
