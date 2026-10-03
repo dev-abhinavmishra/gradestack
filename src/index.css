@@ -78,7 +78,11 @@
   --spacing-container-max: 1280px;
 }
 
+:root {
+  color-scheme: light;
+}
 :root.dark {
+  color-scheme: dark;
   --color-paper: #161C18;
   --color-form: #1E2620;
   --color-form-raised: #273028;

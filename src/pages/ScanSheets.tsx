@@ -500,7 +500,7 @@ export function ScanSheets() {
 
       {/* Mobile header */}
       <header className="md:hidden flex items-center justify-between px-5 h-14 bg-form border-b border-hairline z-40 w-full shrink-0">
-        <h1 className="font-display text-xl font-semibold text-ink">Scan sheets</h1>
+        <h1 className="font-display text-xl font-semibold text-ink">Scan Sheets</h1>
         <button onClick={() => setShowDrawer(!showDrawer)} className="p-2 rounded-md text-pencil hover:text-ink hover:bg-surface-container-low transition-colors flex items-center gap-1.5">
           <Icon name={showDrawer ? 'close' : 'list_alt'} size={20} />
           <span className="text-xs font-semibold">Queue</span>
@@ -731,7 +731,7 @@ export function ScanSheets() {
         {scanToReview && (
           <Modal
             onClose={() => { setReviewScanId(null); setEditingScore(null); }}
-            title="Sheet review"
+            title="Sheet Review"
             subtitle={`${selectedTest?.name || ''}${scanToReview.batchName ? ` · ${scanToReview.batchName}` : ''}`}
             wide
             footer={
@@ -802,7 +802,7 @@ export function ScanSheets() {
                 {/* Per-question markings — tap to correct */}
                 <div className="flex-1 min-h-0">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="ledger-label">Marked answers</span>
+                    <span className="ledger-label">Marked Answers</span>
                     <span className="text-[11px] text-faint">tap one to correct it</span>
                   </div>
                   <div className="grid grid-cols-5 gap-1.5 max-h-48 overflow-y-auto pr-1 table-scroll">
@@ -903,7 +903,7 @@ export function ScanSheets() {
       {isEditingKey && selectedTest && (
         <Modal
           onClose={() => setIsEditingKey(false)}
-          title="Answer key"
+          title="Answer Key"
           subtitle={selectedTest.name}
           wide
           footer={
@@ -986,7 +986,7 @@ export function ScanSheets() {
             >
               <div className="px-6 py-5 border-b border-hairline flex justify-between items-center shrink-0">
                 <div>
-                  <h2 className="text-headline-sm">Frame the sheet</h2>
+                  <h2 className="text-headline-sm">Frame the Sheet</h2>
                   <p className="text-sm text-pencil mt-0.5">Tighten the crop to the answer area, then grade.</p>
                 </div>
                 <div className="flex gap-2">

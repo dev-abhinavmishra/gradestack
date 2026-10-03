@@ -32,7 +32,7 @@ export function TestHistory() {
   return (
     <div className="p-6 lg:p-10 max-w-7xl mx-auto w-full flex-1">
       <PageHeader
-        title="Assessment register"
+        title="Assessment Register"
         description={`${tests.length} assessment${tests.length === 1 ? '' : 's'} on file`}
       >
         <select
@@ -67,7 +67,7 @@ export function TestHistory() {
                   <td colSpan={5} className="py-20">
                     <EmptyState
                       icon="library_books"
-                      title="The register is empty"
+                      title="The Register Is Empty"
                       body="Create an assessment in the builder — then print, scan, and grade it here."
                     >
                       <Link to="/builder" className="inline-flex items-center gap-2 px-6 py-2.5 bg-mark text-on-mark rounded-md font-semibold text-sm hover:bg-mark-deep transition-colors">
@@ -149,7 +149,7 @@ export function TestHistory() {
         {testToDelete && (
           <Modal
             onClose={() => setTestToDelete(null)}
-            title="Delete assessment?"
+            title="Delete Assessment?"
             footer={
               <>
                 <Button variant="ghost" onClick={() => setTestToDelete(null)}>Keep it</Button>

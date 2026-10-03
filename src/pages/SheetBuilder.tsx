@@ -484,7 +484,7 @@ export function SheetBuilder() {
           >
             <div className="p-8 text-center border-b border-hairline">
               <BubbleMark size={9} className="text-mark mx-auto mb-5" />
-              <h2 className="text-headline-md">Restore a sheet</h2>
+              <h2 className="text-headline-md">Restore a Sheet</h2>
               <p className="text-pencil mt-2">Upload a GradeStack PDF to recover its layout — sections, formats, and student-ID block.</p>
             </div>
 
@@ -527,7 +527,7 @@ export function SheetBuilder() {
       <section className="w-full md:w-80 lg:w-[360px] flex-shrink-0 bg-form border-r border-hairline overflow-y-auto p-6 flex flex-col gap-8 z-10 relative">
         <header className="flex justify-between items-start">
           <div>
-            <h2 className="text-headline-md" id="sheet-designer-title">Sheet builder</h2>
+            <h2 className="text-headline-md" id="sheet-designer-title">Sheet Builder</h2>
             <p className="text-sm text-pencil mt-0.5">Design the sheet your class will fill in.</p>
           </div>
           {!editingTestId && (
@@ -544,7 +544,7 @@ export function SheetBuilder() {
         </header>
 
         <div className="space-y-4">
-          <div className="ledger-label">Assessment details</div>
+          <div className="ledger-label">Assessment Details</div>
           <div className="grid gap-4">
             <Field label="Test name">
               <Input
@@ -575,7 +575,7 @@ export function SheetBuilder() {
 
         <div className="space-y-4 pt-6 border-t border-hairline">
           <div className="flex items-center justify-between">
-            <div className="ledger-label">Question sections</div>
+            <div className="ledger-label">Question Sections</div>
             <Button
               variant="outline"
               icon="add"

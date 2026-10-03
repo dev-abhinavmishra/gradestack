@@ -4,9 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="GradeStack — the mark book for bubble-sheet assessments. Build the sheet, mark the key, grade the stack." />
-    <meta name="theme-color" content="#14604A" />
+    <meta name="theme-color" content="#EEF0E8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#161C18" media="(prefers-color-scheme: dark)" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>GradeStack</title>
+    <script>
+      /* Apply the persisted theme before first paint — without this a
+         dark-theme user gets a light flash on every load. */
+      (function () {
+        try {
+          var s = JSON.parse(localStorage.getItem('gradestack-storage') || '{}');
+          var t = (s.state && s.state.theme) || 'system';
+          var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
     <!-- Open Graph Metadata -->
     <meta property="og:title" content="GradeStack" />
     <meta property="og:description" content="Automated bubble sheet grading using AI. Quickly create, scan, and grade assessments with advanced insights." />

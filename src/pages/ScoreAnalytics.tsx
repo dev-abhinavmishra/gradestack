@@ -176,7 +176,7 @@ export function ScoreAnalytics() {
         {/* Distribution */}
         <div className="col-span-1 lg:col-span-7 doc p-6">
           <div className="flex justify-between items-baseline mb-8">
-            <h3 className="font-display text-lg font-semibold">Score distribution</h3>
+            <h3 className="font-display text-lg font-semibold">Score Distribution</h3>
             <span className="ledger-label">{numScanned} sheets</span>
           </div>
           <div className="h-[220px] flex items-end relative border-b border-l border-hairline-strong">
@@ -205,7 +205,7 @@ export function ScoreAnalytics() {
         {/* Item accuracy — which questions missed */}
         <div className="col-span-1 lg:col-span-5 doc flex flex-col overflow-hidden">
           <div className="px-6 py-4 border-b border-hairline flex justify-between items-center bg-surface-container-low">
-            <h3 className="font-display text-lg font-semibold">Hardest items</h3>
+            <h3 className="font-display text-lg font-semibold">Hardest Items</h3>
             <span className="ledger-label">by % correct</span>
           </div>
           <div className="flex-1 overflow-y-auto table-scroll" style={{ maxHeight: '290px' }}>

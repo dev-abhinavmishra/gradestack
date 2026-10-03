@@ -16,27 +16,24 @@ function AppLayout() {
   const theme = useStore(state => state.theme);
 
   useEffect(() => {
-    let isDark = false;
-    if (theme === 'dark') {
-      isDark = true;
-    } else if (theme === 'system') {
-      isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    }
-    
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => {
+      const isDark = theme === 'dark' || (theme === 'system' && media.matches);
+      document.documentElement.classList.toggle('dark', isDark);
+    };
+    apply();
+    // 'system' must track the OS while the app is open, not once.
+    media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
   }, [theme]);
 
   const getPageTitle = () => {
     switch (location.pathname) {
       case '/': return 'Dashboard';
-      case '/builder': return 'Sheet builder';
-      case '/scan': return 'Scan sheets';
-      case '/analytics': return 'Score analytics';
-      case '/history': return 'Test history';
+      case '/builder': return 'Sheet Builder';
+      case '/scan': return 'Scan Sheets';
+      case '/analytics': return 'Score Analytics';
+      case '/history': return 'Test History';
       case '/settings': return 'Settings';
       default: return 'GradeStack';
     }

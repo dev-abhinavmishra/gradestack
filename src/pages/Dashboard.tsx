@@ -39,7 +39,7 @@ export function Dashboard() {
             <p className="text-sm text-pencil mb-1">
               {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
             </p>
-            <h2 className="text-display">Mark book</h2>
+            <h2 className="text-display">Mark Book</h2>
           </div>
           <div className="flex items-center gap-6 text-sm">
             <div className="flex flex-col items-end">
@@ -103,7 +103,7 @@ export function Dashboard() {
           {/* Assessment ledger */}
           <div className="lg:col-span-2 doc overflow-hidden">
             <div className="px-6 py-4 border-b border-hairline flex justify-between items-center">
-              <h3 className="text-headline-sm">Recent assessments</h3>
+              <h3 className="text-headline-sm">Recent Assessments</h3>
               <Link to="/history" className="text-sm font-semibold text-mark hover:text-mark-deep flex items-center gap-1">
                 All tests <Icon name="arrow_forward" size={16} />
               </Link>
@@ -177,7 +177,7 @@ export function Dashboard() {
           {/* Right rail — trend + review queue */}
           <div className="flex flex-col gap-6">
             <div className="doc p-6">
-              <h3 className="font-display text-lg font-semibold mb-1">Class average</h3>
+              <h3 className="font-display text-lg font-semibold mb-1">Class Average</h3>
               <p className="text-sm text-pencil mb-6">Across your last {recentTestsWithScans.length} assessments</p>
 
               <div className="relative h-[180px] border-b border-l border-hairline-strong">
@@ -229,7 +229,7 @@ export function Dashboard() {
             {/* Review queue — the sheets that still need a human */}
             <div className="doc overflow-hidden">
               <div className="px-5 py-3.5 border-b border-hairline flex justify-between items-center">
-                <h3 className="font-display text-lg font-semibold">Awaiting review</h3>
+                <h3 className="font-display text-lg font-semibold">Awaiting Review</h3>
                 {pendingReview.length > 0 && (
                   <span className="font-mono text-xs font-semibold text-red">{pendingReview.length}</span>
                 )}

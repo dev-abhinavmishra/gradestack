@@ -117,7 +117,7 @@ export function Settings() {
       <section className="doc p-6 mb-6">
         <div className="flex items-start justify-between gap-4 mb-1">
           <div>
-            <h2 className="font-display text-lg font-semibold">Grading scale</h2>
+            <h2 className="font-display text-lg font-semibold">Grading Scale</h2>
             <p className="text-sm text-pencil">Minimum percentage for each letter. Below D is an F.</p>
           </div>
           <button
@@ -179,7 +179,7 @@ export function Settings() {
 
       {/* Sheet reader */}
       <section className="doc p-6 mb-6">
-        <h2 className="font-display text-lg font-semibold">Sheet reader</h2>
+        <h2 className="font-display text-lg font-semibold">Sheet Reader</h2>
         <p className="text-sm text-pencil mt-1 mb-4">
           Photos and scanned pages are read with Gemini. Filled GradeStack PDFs grade locally — no key needed.
         </p>
@@ -209,7 +209,7 @@ export function Settings() {
 
       {/* Data */}
       <section className="doc p-6 mb-6">
-        <h2 className="font-display text-lg font-semibold mb-1">Your data</h2>
+        <h2 className="font-display text-lg font-semibold mb-1">Your Data</h2>
         <p className="text-sm text-pencil mb-5">
           {tests.length} assessment{tests.length === 1 ? '' : 's'} · {scans.length} sheet{scans.length === 1 ? '' : 's'} in this register.
         </p>
@@ -230,7 +230,7 @@ export function Settings() {
 
       {/* Sync */}
       <section className="doc p-6 mb-6">
-        <h2 className="font-display text-lg font-semibold mb-1">Cloud sync</h2>
+        <h2 className="font-display text-lg font-semibold mb-1">Cloud Sync</h2>
         {firebaseEnabled ? (
           user ? (
             <div className="flex items-center justify-between mt-3">
@@ -258,7 +258,7 @@ export function Settings() {
 
       {/* Danger */}
       <section className="doc p-6 border-red/25">
-        <h2 className="font-display text-lg font-semibold text-red mb-1">Factory reset</h2>
+        <h2 className="font-display text-lg font-semibold text-red mb-1">Factory Reset</h2>
         <p className="text-sm text-pencil mb-4">Wipes every assessment, every graded sheet, and all settings — local and (if signed in) synced.</p>
         {confirmReset ? (
           <div className="flex items-center gap-3">
