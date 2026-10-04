@@ -40,3 +40,21 @@ export const signInWithGoogle = () => {
   return signInWithPopup(firebaseAuth, googleProvider);
 };
 export const logOut = () => (firebaseAuth ? signOut(firebaseAuth) : Promise.resolve());
+
+/* Turns an auth failure into honest copy. Returns null for things that
+   aren't errors — the user closing or cancelling the popup. */
+export const describeAuthError = (e: unknown): string | null => {
+  const code = (e as { code?: string })?.code || '';
+  const domain = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request' || code === 'auth/user-cancelled') return null;
+  if (code === 'auth/unauthorized-domain')
+    return `${domain} isn't authorized for sign-in — add it in Firebase Console → Authentication → Settings → Authorized domains.`;
+  if (code === 'auth/popup-blocked')
+    return 'The sign-in popup was blocked — allow popups for this site and try again.';
+  if (code === 'auth/operation-not-allowed')
+    return 'Google sign-in is switched off for this Firebase project — enable it in Firebase Console → Authentication → Sign-in method.';
+  if (code === 'auth/network-request-failed')
+    return "Couldn't reach the sign-in service — check the connection and try again.";
+  const msg = (e as { message?: string })?.message;
+  return `Sign-in failed${msg ? ` — ${msg}` : ' — try again.'}`;
+};

@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useStore } from '../store';
-import { signInWithGoogle, logOut, firebaseEnabled } from '../lib/firebase';
+import { signInWithGoogle, logOut, firebaseEnabled, describeAuthError } from '../lib/firebase';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Icon, BubbleMark } from './ui';
@@ -18,6 +18,16 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
   const location = useLocation();
   const user = useStore(state => state.user);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
+
+  const handleSignIn = async () => {
+    setSignInError(null);
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      setSignInError(describeAuthError(e));
+    }
+  };
 
   return (
     <>
@@ -140,10 +150,17 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
               )}
             </div>
           ) : firebaseEnabled ? (
-            <button onClick={signInWithGoogle} className={`flex items-center justify-center ${isCollapsed ? 'p-2' : 'gap-2 px-2 py-2'} w-full border border-hairline-strong rounded-md hover:bg-surface-container-low transition-colors text-ink`} title="Sign in to sync">
-              <Icon name="login" size={18} />
-              {!isCollapsed && <span className="text-sm font-medium whitespace-nowrap">Sign in to sync</span>}
-            </button>
+            <div>
+              <button onClick={() => void handleSignIn()} className={`flex items-center justify-center ${isCollapsed ? 'p-2' : 'gap-2 px-2 py-2'} w-full border border-hairline-strong rounded-md hover:bg-surface-container-low transition-colors text-ink`} title="Sign in to sync">
+                <Icon name="login" size={18} />
+                {!isCollapsed && <span className="text-sm font-medium whitespace-nowrap">Sign in to sync</span>}
+              </button>
+              {signInError && (
+                <p className="text-red text-xs leading-relaxed mt-2 px-1" title={signInError}>
+                  {isCollapsed ? 'Sign-in failed' : signInError}
+                </p>
+              )}
+            </div>
           ) : (
             !isCollapsed && (
               <p className="text-xs text-faint leading-relaxed px-2">
