@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useStore } from '../store';
 import { Icon, Button, Input, Toggle, PageHeader, Bubble } from '../components/ui';
 import { GradingScale, downloadFile, DEFAULT_SCALE } from '../lib/grading';
-import { firebaseEnabled, signInWithGoogle, logOut } from '../lib/firebase';
+import { firebaseEnabled, signInWithGoogle, logOut, describeAuthError } from '../lib/firebase';
 
 const SCALE_ROWS: Array<{ letter: keyof GradingScale; hint: string }> = [
   { letter: 'A', hint: 'excellent' },
@@ -34,6 +34,7 @@ export function Settings() {
   const [keyDirty, setKeyDirty] = useState(false);
   const [regrading, setRegrading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [signInError, setSignInError] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -67,6 +68,15 @@ export function Settings() {
       flash(`Imported ${n} new item${n === 1 ? '' : 's'}.`);
     } catch {
       flash("That file isn't a GradeStack backup.");
+    }
+  };
+
+  const handleSignIn = async () => {
+    setSignInError(null);
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      setSignInError(describeAuthError(e));
     }
   };
 
@@ -246,9 +256,17 @@ export function Settings() {
               <Button variant="ghost" onClick={() => void logOut()}>Sign out</Button>
             </div>
           ) : (
-            <div className="flex items-center justify-between mt-3">
-              <p className="text-sm text-pencil">Sign in to keep the register in sync across devices.</p>
-              <Button variant="outline" icon="login" onClick={() => void signInWithGoogle()} className="h-10">Sign in with Google</Button>
+            <div className="mt-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-pencil">Sign in to keep the register in sync across devices.</p>
+                <Button variant="outline" icon="login" onClick={() => void handleSignIn()} className="h-10 shrink-0">Sign in with Google</Button>
+              </div>
+              {signInError && (
+                <p className="text-red text-xs leading-relaxed mt-3 flex items-start gap-1.5">
+                  <Icon name="error" size={15} className="shrink-0 mt-px" />
+                  <span>{signInError}</span>
+                </p>
+              )}
             </div>
           )
         ) : (
